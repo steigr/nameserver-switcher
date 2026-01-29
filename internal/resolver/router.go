@@ -51,9 +51,10 @@ type RouteResult struct {
 }
 
 // Route processes a DNS request according to the routing rules:
-// 1. If request matches request patterns, do non-recursive lookup to request resolver
+// 1. If request matches request patterns, do non-recursive lookup to explicit resolver
 // 2. If response is CNAME and matches CNAME patterns, recursive lookup to explicit resolver
-// 3. Otherwise, use system resolver
+// 3. If CNAME doesn't match, use system resolver
+// 4. If no request pattern match, use system resolver
 func (r *Router) Route(ctx context.Context, req *dns.Msg) (*RouteResult, error) {
 	if len(req.Question) == 0 {
 		return nil, fmt.Errorf("no question in request")
@@ -69,11 +70,11 @@ func (r *Router) Route(ctx context.Context, req *dns.Msg) (*RouteResult, error) 
 		result.RequestMatched = true
 		result.MatchedPattern = r.requestMatcher.MatchingPattern(qname)
 
-		// Do non-recursive lookup to request resolver
-		if r.requestResolver != nil {
-			resp, err := r.requestResolver.Resolve(ctx, req)
+		// Do non-recursive lookup to explicit resolver
+		if r.explicitResolver != nil {
+			resp, err := r.explicitResolver.Resolve(ctx, req)
 			if err != nil {
-				return nil, fmt.Errorf("request resolver failed: %w", err)
+				return nil, fmt.Errorf("explicit resolver failed: %w", err)
 			}
 
 			// Step 2: Check if response contains CNAME that matches CNAME patterns
@@ -86,24 +87,20 @@ func (r *Router) Route(ctx context.Context, req *dns.Msg) (*RouteResult, error) 
 						result.CNAMEPattern = r.cnameMatcher.MatchingPattern(cname)
 
 						// Step 3: Do recursive lookup to explicit resolver
-						if r.explicitResolver != nil {
-							explicitResp, err := r.explicitResolver.Resolve(ctx, req)
-							if err != nil {
-								return nil, fmt.Errorf("explicit resolver failed: %w", err)
-							}
-							result.Response = explicitResp
-							result.ResolverUsed = r.explicitResolver.Name()
-							return result, nil
+						// Use the same explicit resolver for recursive lookup
+						explicitResp, err := r.explicitResolver.Resolve(ctx, req)
+						if err != nil {
+							return nil, fmt.Errorf("explicit resolver failed: %w", err)
 						}
-						break
+						result.Response = explicitResp
+						result.ResolverUsed = r.explicitResolver.Name()
+						return result, nil
 					}
 				}
 			}
 
-			// No CNAME match, return the request resolver response
-			// or fall through to system resolver
+			// No CNAME match, use system resolver
 			if !result.CNAMEMatched {
-				// If we got a response but CNAME didn't match, use system resolver
 				if r.systemResolver != nil {
 					sysResp, err := r.systemResolver.Resolve(ctx, req)
 					if err != nil {
@@ -115,6 +112,19 @@ func (r *Router) Route(ctx context.Context, req *dns.Msg) (*RouteResult, error) 
 				}
 			}
 		}
+
+		// If no explicit resolver configured but pattern matched, fall back to system
+		if r.systemResolver != nil {
+			sysResp, err := r.systemResolver.Resolve(ctx, req)
+			if err != nil {
+				return nil, fmt.Errorf("system resolver failed: %w", err)
+			}
+			result.Response = sysResp
+			result.ResolverUsed = r.systemResolver.Name()
+			return result, nil
+		}
+
+		return nil, fmt.Errorf("no resolver available for matched pattern")
 	}
 
 	// Step 4: No pattern match, use system resolver

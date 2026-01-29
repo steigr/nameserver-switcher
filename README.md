@@ -15,13 +15,13 @@ A DNS proxy server with intelligent routing based on regex pattern matching. It 
 
 1. **Request Pattern Matching**: When a DNS request arrives (via DNS or gRPC), it checks if the query name matches any configured request patterns.
 
-2. **Non-recursive Lookup**: If a pattern matches, performs a non-recursive DNS lookup to the configured "request resolver".
+2. **Non-recursive Lookup to Explicit Resolver**: If a pattern matches, performs a non-recursive DNS lookup to the configured "explicit resolver".
 
 3. **CNAME Pattern Matching**: If the response contains a CNAME record, checks if the CNAME target matches any CNAME patterns.
 
-4. **Explicit Resolver**: If a CNAME pattern matches, performs a recursive lookup to the "explicit resolver".
+4. **Recursive Lookup**: If a CNAME pattern matches, performs a recursive lookup to the "explicit resolver".
 
-5. **System Fallback**: If no patterns match, or if CNAME doesn't match, falls back to the system's default DNS resolver.
+5. **System Fallback**: If no CNAME match occurs (but request pattern matched), uses the system resolver. If no request pattern matches at all, uses the system resolver.
 
 ## Installation
 
