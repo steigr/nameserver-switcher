@@ -1,0 +1,77 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+README.md
+docs/
+*.md
+LICENSE
+
+# Test files
+*_test.go
+test/
+test-logging.sh
+coverage.out
+*.test
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+
+# Build artifacts
+bin/
+build/
+dist/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Helm charts
+charts/
+
+# Development tools
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Makefiles and scripts
+Makefile
+scripts/
+
+# Dependencies (will be downloaded during build)
+vendor/
+
+# Docker files (not needed in the image)
+Dockerfile*
+.dockerignore
+docker-compose*.yml
+
+# Environment files
+.env
+.env.*
+*.local
+
+# Logs
+*.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Integration tests
+test/integration/
+test/integration-test/
+
+# Go specific
+go.sum
+go.work
+go.work.sum
