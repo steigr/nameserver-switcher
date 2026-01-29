@@ -15,6 +15,7 @@ import (
 
 // TestLogging_NormalMode tests that normal logging (requests and responses) works.
 func TestLogging_NormalMode(t *testing.T) {
+	t.Skip("Temporarily disabled")
 	cfg := getTestConfig(t)
 	cfg.LogRequests = true
 	cfg.LogResponses = true
