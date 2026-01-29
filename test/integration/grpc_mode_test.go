@@ -273,7 +273,6 @@ func (s *GRPCModeSuite) TestDNSMasqExplicitReturnsCorrectIPForBarMatch() {
 // explicit resolver returns a direct A record (no CNAME), it should fall back to system resolver.
 // Expected: 127.0.0.4 (from system resolver), NOT 127.0.0.5 (from explicit resolver)
 func (s *GRPCModeSuite) TestDirectExampleComNoCNAME() {
-	s.T().Skip("Temporarily disabled - requires router logic investigation for no-CNAME fallback")
 	hostPort, err := s.infra.GetCoreDNSHostPort(s.ctx)
 	require.NoError(s.T(), err)
 

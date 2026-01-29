@@ -15,7 +15,6 @@ import (
 type Router struct {
 	requestMatcher   matcher.Matcher
 	cnameMatcher     matcher.Matcher
-	requestResolver  Resolver
 	explicitResolver Resolver
 	systemResolver   Resolver
 }
@@ -24,7 +23,6 @@ type Router struct {
 type RouterConfig struct {
 	RequestMatcher   matcher.Matcher
 	CNAMEMatcher     matcher.Matcher
-	RequestResolver  Resolver
 	ExplicitResolver Resolver
 	SystemResolver   Resolver
 }
@@ -34,7 +32,6 @@ func NewRouter(cfg RouterConfig) *Router {
 	return &Router{
 		requestMatcher:   cfg.RequestMatcher,
 		cnameMatcher:     cfg.CNAMEMatcher,
-		requestResolver:  cfg.RequestResolver,
 		explicitResolver: cfg.ExplicitResolver,
 		systemResolver:   cfg.SystemResolver,
 	}

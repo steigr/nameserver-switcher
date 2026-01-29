@@ -64,30 +64,31 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}
 
 	// Create resolvers
-	var requestResolver resolver.Resolver
-	if cfg.RequestResolver != "" {
-		requestResolver = resolver.NewDNSResolver(cfg.RequestResolver, false, "request")
-		logging.Infof("Using request resolver: %s", cfg.RequestResolver)
-	}
-
 	var explicitResolver resolver.Resolver
 	if cfg.ExplicitResolver != "" {
 		explicitResolver = resolver.NewDNSResolver(cfg.ExplicitResolver, true, "explicit")
 		logging.Infof("Using explicit resolver: %s", cfg.ExplicitResolver)
 	}
 
-	systemResolver, err := resolver.NewSystemResolver()
-	if err != nil {
-		logging.Warnf("Failed to create system resolver, using fallback: %v", err)
-		systemResolver = resolver.NewSystemResolverWithServers([]string{"8.8.8.8:53", "8.8.4.4:53"})
+	// System resolver: use REQUEST_RESOLVER if configured, otherwise use system /etc/resolv.conf
+	var systemResolver resolver.Resolver
+	if cfg.RequestResolver != "" {
+		systemResolver = resolver.NewDNSResolver(cfg.RequestResolver, true, "system")
+		logging.Infof("Using configured system resolver: %s", cfg.RequestResolver)
+	} else {
+		sysRes, err := resolver.NewSystemResolver()
+		if err != nil {
+			logging.Warnf("Failed to create system resolver, using fallback: %v", err)
+			sysRes = resolver.NewSystemResolverWithServers([]string{"8.8.8.8:53", "8.8.4.4:53"})
+		}
+		systemResolver = sysRes
+		logging.Infof("Using system resolvers: %v", sysRes.Servers())
 	}
-	logging.Infof("Using system resolvers: %v", systemResolver.Servers())
 
 	// Create router
 	router := resolver.NewRouter(resolver.RouterConfig{
 		RequestMatcher:   requestMatcher,
 		CNAMEMatcher:     cnameMatcher,
-		RequestResolver:  requestResolver,
 		ExplicitResolver: explicitResolver,
 		SystemResolver:   systemResolver,
 	})

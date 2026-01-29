@@ -392,7 +392,6 @@ func TestServer_Resolve_WithMetricsAndPatternMatch(t *testing.T) {
 	router := resolver.NewRouter(resolver.RouterConfig{
 		RequestMatcher:   requestMatcher,
 		CNAMEMatcher:     cnameMatcher,
-		RequestResolver:  &mockResolver{name: "request", response: resp},
 		ExplicitResolver: &mockResolver{name: "explicit", response: resp},
 	})
 
