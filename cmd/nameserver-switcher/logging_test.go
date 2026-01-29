@@ -60,6 +60,7 @@ func TestLogging_DebugMode(t *testing.T) {
 	cfg.Debug = true
 	cfg.RequestPatterns = []string{`.*\.example\.com$`}
 	cfg.CNAMEPatterns = []string{`.*\.cdn\..*`}
+	cfg.RequestResolver = testGoogleDNS
 
 	app, err := NewApp(cfg)
 	require.NoError(t, err)
@@ -78,7 +79,7 @@ func TestLogging_DebugMode(t *testing.T) {
 	// Make a DNS query
 	c := new(dns.Client)
 	m := new(dns.Msg)
-	m.SetQuestion(dns.Fqdn("test.example.com"), dns.TypeA)
+	m.SetQuestion(dns.Fqdn("example.com"), dns.TypeA)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", cfg.DNSPort)
 	_, _, err = c.Exchange(m, addr)
