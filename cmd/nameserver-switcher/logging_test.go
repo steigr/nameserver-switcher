@@ -30,7 +30,7 @@ func TestLogging_NormalMode(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		app.Shutdown(ctx)
+		_ = app.Shutdown(ctx)
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -69,7 +69,7 @@ func TestLogging_DebugMode(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		app.Shutdown(ctx)
+		_ = app.Shutdown(ctx)
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -103,7 +103,7 @@ func TestLogging_Disabled(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		app.Shutdown(ctx)
+		_ = app.Shutdown(ctx)
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -153,5 +153,5 @@ func Example_logging() {
 	// Shutdown
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	app.Shutdown(ctx)
+	_ = app.Shutdown(ctx)
 }

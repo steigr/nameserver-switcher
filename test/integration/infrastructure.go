@@ -16,11 +16,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-// silentLogger is a logger that discards all output
-type silentLogger struct{}
-
-func (s silentLogger) Printf(format string, v ...interface{}) {}
-
 // TestMode defines the mode of integration testing.
 type TestMode string
 
@@ -327,14 +322,14 @@ func (i *Infrastructure) RunDNSQuery(ctx context.Context, serverAddr, domain str
 	if err != nil {
 		return "", fmt.Errorf("failed to create query container: %w", err)
 	}
-	defer container.Terminate(ctx)
+	defer func() { _ = container.Terminate(ctx) }()
 
 	// Get the logs (output)
 	logs, err := container.Logs(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to get container logs: %w", err)
 	}
-	defer logs.Close()
+	defer func() { _ = logs.Close() }()
 
 	buf := new(strings.Builder)
 	_, err = io.Copy(buf, logs)

@@ -155,7 +155,7 @@ func (l *Logger) log(level Level, msg string, fields map[string]interface{}) {
 		output = l.formatText(entry)
 	}
 
-	fmt.Fprintln(l.output, output)
+	_, _ = fmt.Fprintln(l.output, output)
 }
 
 // formatJSON formats the log entry as JSON.

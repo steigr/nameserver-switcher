@@ -162,7 +162,7 @@ func (s *Server) handleRequest(w dns.ResponseWriter, req *dns.Msg) {
 		// Send SERVFAIL response
 		resp := &dns.Msg{}
 		resp.SetRcode(req, dns.RcodeServerFailure)
-		w.WriteMsg(resp)
+		_ = w.WriteMsg(resp)
 
 		if s.metrics != nil {
 			s.metrics.RecordResponseCode("SERVFAIL")

@@ -202,7 +202,7 @@ func TestServer_HandleRequest_UDP(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Shutdown(ctx)
+		_ = server.Shutdown(ctx)
 	}()
 
 	time.Sleep(200 * time.Millisecond)
@@ -246,7 +246,7 @@ func TestServer_HandleRequest_TCP(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Shutdown(ctx)
+		_ = server.Shutdown(ctx)
 	}()
 
 	time.Sleep(200 * time.Millisecond)
@@ -281,7 +281,7 @@ func TestServer_HandleRequest_RoutingError(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Shutdown(ctx)
+		_ = server.Shutdown(ctx)
 	}()
 
 	time.Sleep(200 * time.Millisecond)
@@ -333,7 +333,7 @@ func TestServer_HandleRequest_WithPatternMatch(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Shutdown(ctx)
+		_ = server.Shutdown(ctx)
 	}()
 
 	time.Sleep(200 * time.Millisecond)
@@ -375,7 +375,7 @@ func TestServer_HandleRequest_NoMetrics(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Shutdown(ctx)
+		_ = server.Shutdown(ctx)
 	}()
 
 	time.Sleep(200 * time.Millisecond)
@@ -411,7 +411,7 @@ func TestServer_HandleRequest_NoQuestion(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.Shutdown(ctx)
+		_ = server.Shutdown(ctx)
 	}()
 
 	time.Sleep(200 * time.Millisecond)
@@ -421,7 +421,7 @@ func TestServer_HandleRequest_NoQuestion(t *testing.T) {
 	msg := &dns.Msg{}
 	// Explicitly not setting a question
 
-	_, _, err = client.Exchange(msg, "127.0.0.1:25359")
+	_, _, _ = client.Exchange(msg, "127.0.0.1:25359")
 	// This might error or return SERVFAIL, either is acceptable
 	// The test is mainly to ensure the server doesn't panic
 }
@@ -445,7 +445,7 @@ func TestServer_Start_Error(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server1.Shutdown(ctx)
+		_ = server1.Shutdown(ctx)
 	}()
 
 	time.Sleep(200 * time.Millisecond)

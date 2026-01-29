@@ -194,7 +194,7 @@ func TestApp_HTTPEndpoints(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		app.Shutdown(ctx)
+		_ = app.Shutdown(ctx)
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -204,28 +204,28 @@ func TestApp_HTTPEndpoints(t *testing.T) {
 	t.Run("healthz", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/healthz")
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
 	t.Run("readyz", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/readyz")
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
 	t.Run("livez", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/livez")
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
 	t.Run("metrics", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/metrics")
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 
 		body, err := io.ReadAll(resp.Body)
@@ -250,7 +250,7 @@ func TestApp_StartWithPortConflict(t *testing.T) {
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		app1.Shutdown(ctx)
+		_ = app1.Shutdown(ctx)
 	}()
 
 	time.Sleep(100 * time.Millisecond)
@@ -277,7 +277,7 @@ func TestApp_StartWithPortConflict(t *testing.T) {
 	if app2 != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
-		app2.Shutdown(ctx)                // Shutdown any servers that may have started
+		_ = app2.Shutdown(ctx)            // Shutdown any servers that may have started
 		time.Sleep(50 * time.Millisecond) // Give time for goroutines to stop
 	}
 }
