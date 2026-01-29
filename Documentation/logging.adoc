@@ -1,0 +1,530 @@
+= Logging Documentation
+:toc: left
+:toclevels: 3
+:numbered:
+:icons: font
+:source-highlighter: rouge
+
+== Overview
+
+nameserver-switcher provides comprehensive logging capabilities with support for two output formats:
+
+* **Text format**: Human-readable logs with timestamps, suitable for development and debugging
+* **JSON format**: Structured logs with millisecond-precision timestamps, suitable for log aggregation and analysis
+
+== Configuration
+
+=== Command Line Flags
+
+[cols="2,4,1", options="header"]
+|===
+|Flag
+|Description
+|Default
+
+|`--log-format`
+|Log output format: `text` or `json`
+|`text`
+
+|`--log-requests`
+|Enable logging of all DNS requests
+|`true`
+
+|`--log-responses`
+|Enable logging of all DNS responses
+|`true`
+
+|`--debug`
+|Enable debug-level logging with detailed routing information
+|`false`
+|===
+
+=== Environment Variables
+
+[cols="2,4,2", options="header"]
+|===
+|Variable
+|Description
+|Values
+
+|`LOG_FORMAT`
+|Log output format
+|`text` (default), `json`
+
+|`LOG_REQUESTS`
+|Enable request logging
+|`true` (default), `false`, `0`
+
+|`LOG_RESPONSES`
+|Enable response logging
+|`true` (default), `false`, `0`
+
+|`DEBUG`
+|Enable debug logging
+|`true`, `1` to enable
+|===
+
+== Log Formats
+
+=== Text Format (Default)
+
+The text format provides human-readable output with timestamps including millisecond precision.
+
+==== Format Structure
+
+[source]
+----
+YYYY/MM/DD HH:MM:SS.mmm [LEVEL] message key=value key2=value2
+----
+
+==== Example Output
+
+[source]
+----
+2026/01/29 14:32:15.123 [INFO] Starting nameserver-switcher...
+2026/01/29 14:32:15.124 [INFO] DNS server listening on 0.0.0.0:5353
+2026/01/29 14:32:15.456 [INFO] DNS request received protocol=udp type=A name=example.com. from=127.0.0.1:54321
+2026/01/29 14:32:15.468 [INFO] DNS response sent name=example.com. rcode=NOERROR answer_count=1 resolver=system duration_ms=12.345
+2026/01/29 14:32:15.469 [DEBUG] REQUEST_PATTERN matched pattern=.*\.example\.com$ request=example.com.
+2026/01/29 14:32:15.469 [DEBUG] Queried nameserver resolver=explicit
+----
+
+=== JSON Format
+
+The JSON format provides structured logging suitable for log aggregation systems like Elasticsearch, Splunk, or CloudWatch.
+
+==== Format Structure
+
+Each log entry is a single-line JSON object with the following fields:
+
+[cols="2,2,4", options="header"]
+|===
+|Field
+|Type
+|Description
+
+|`timemillis`
+|integer
+|Unix timestamp in milliseconds since epoch (e.g., `1738161135123`)
+
+|`time`
+|string
+|ISO 8601 timestamp with nanosecond precision (e.g., `"2026-01-29T14:32:15.123456789Z"`)
+
+|`level`
+|string
+|Log level: `DEBUG`, `INFO`, `WARN`, `ERROR`
+
+|`message`
+|string
+|Human-readable log message
+
+|`component`
+|string (optional)
+|Component name (e.g., `"dns-server"`, `"grpc-server"`)
+
+|`fields`
+|object (optional)
+|Additional structured fields specific to the log entry
+|===
+
+==== Example Output
+
+**Startup log:**
+[source,json]
+----
+{"timemillis":1738161135123,"time":"2026-01-29T14:32:15.123456789Z","level":"INFO","message":"Starting nameserver-switcher..."}
+----
+
+**DNS request log:**
+[source,json]
+----
+{"timemillis":1738161135456,"time":"2026-01-29T14:32:15.456789012Z","level":"INFO","message":"DNS request received","fields":{"protocol":"udp","type":"A","name":"example.com.","from":"127.0.0.1:54321"}}
+----
+
+**DNS response log:**
+[source,json]
+----
+{"timemillis":1738161135468,"time":"2026-01-29T14:32:15.468901234Z","level":"INFO","message":"DNS response sent","fields":{"name":"example.com.","rcode":"NOERROR","answer_count":1,"resolver":"system","duration_ms":12.345,"request_matched":true}}
+----
+
+**Debug log (pattern match):**
+[source,json]
+----
+{"timemillis":1738161135469,"time":"2026-01-29T14:32:15.469012345Z","level":"DEBUG","message":"REQUEST_PATTERN matched","fields":{"pattern":".*\\.example\\.com$","request":"example.com."}}
+----
+
+**Debug log (CNAME match):**
+[source,json]
+----
+{"timemillis":1738161135470,"time":"2026-01-29T14:32:15.470123456Z","level":"DEBUG","message":"CNAME_PATTERN matched","fields":{"pattern":".*\\.cdn\\.example\\.com$","cname":"app.cdn.example.com."}}
+----
+
+== Log Levels
+
+[cols="1,4", options="header"]
+|===
+|Level
+|Description
+
+|`DEBUG`
+|Detailed information for debugging, including pattern matching decisions and full DNS responses. Only shown when `--debug` is enabled.
+
+|`INFO`
+|General operational information: server startup, DNS requests/responses, configuration summary.
+
+|`WARN`
+|Warning conditions that don't prevent operation but may indicate issues (e.g., fallback resolvers being used).
+
+|`ERROR`
+|Error conditions: failed DNS lookups, routing errors, server errors.
+|===
+
+== Log Categories
+
+=== Startup Logs
+
+Logged when the server starts:
+
+[source]
+----
+[INFO] Starting nameserver-switcher...
+[INFO] Using explicit resolver: 8.8.8.8:53
+[INFO] Using system resolvers: [1.1.1.1:53 8.8.4.4:53]
+[INFO] DNS server listening on 0.0.0.0:5353
+[INFO] gRPC server listening on 0.0.0.0:5354
+[INFO] HTTP server listening on 0.0.0.0:8080
+[INFO] Server is ready
+[INFO] Request patterns: 2 configured
+[INFO] CNAME patterns: 1 configured
+----
+
+=== DNS Request Logs
+
+Logged for each incoming DNS request (when `LOG_REQUESTS=true`):
+
+**Text format:**
+[source]
+----
+[INFO] DNS request received protocol=udp type=A name=example.com. from=127.0.0.1:54321
+----
+
+**JSON format fields:**
+[cols="2,2,4", options="header"]
+|===
+|Field
+|Type
+|Description
+
+|`protocol`
+|string
+|Transport protocol: `udp`, `tcp`, or `grpc`
+
+|`type`
+|string
+|DNS query type: `A`, `AAAA`, `CNAME`, `MX`, etc.
+
+|`name`
+|string
+|Queried domain name (with trailing dot)
+
+|`from`
+|string
+|Client address and port
+|===
+
+=== DNS Response Logs
+
+Logged for each DNS response (when `LOG_RESPONSES=true`):
+
+**Text format:**
+[source]
+----
+[INFO] DNS response sent name=example.com. rcode=NOERROR answer_count=2 resolver=explicit duration_ms=15.234 request_matched=true cname_matched=true
+----
+
+**JSON format fields:**
+[cols="2,2,4", options="header"]
+|===
+|Field
+|Type
+|Description
+
+|`name`
+|string
+|Queried domain name
+
+|`rcode`
+|string
+|DNS response code: `NOERROR`, `NXDOMAIN`, `SERVFAIL`, etc.
+
+|`answer_count`
+|integer
+|Number of answer records in the response
+
+|`resolver`
+|string
+|Resolver used: `system`, `explicit`, or custom name
+
+|`duration_ms`
+|float
+|Query processing time in milliseconds
+
+|`request_matched`
+|boolean (optional)
+|True if a request pattern matched
+
+|`cname_matched`
+|boolean (optional)
+|True if a CNAME pattern matched
+|===
+
+=== Debug Logs
+
+Logged when `--debug` is enabled:
+
+==== Pattern Match
+
+[source,json]
+----
+{"level":"DEBUG","message":"REQUEST_PATTERN matched","fields":{"pattern":".*\\.example\\.com$","request":"foo.example.com."}}
+----
+
+==== CNAME Pattern Match
+
+[source,json]
+----
+{"level":"DEBUG","message":"CNAME_PATTERN matched","fields":{"pattern":".*\\.cdn\\.example\\.com$","cname":"app.cdn.example.com."}}
+----
+
+==== Resolver Used
+
+[source,json]
+----
+{"level":"DEBUG","message":"Queried nameserver","fields":{"resolver":"explicit"}}
+----
+
+==== Full Response
+
+[source,json]
+----
+{"level":"DEBUG","message":"Full response","fields":{"response":";; opcode: QUERY, status: NOERROR, id: 12345\n;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 0\n..."}}
+----
+
+=== Error Logs
+
+[source]
+----
+[ERROR] Error routing request: explicit resolver failed: timeout
+[ERROR] Error writing response: connection reset by peer
+[ERROR] HTTP server error: bind: address already in use
+----
+
+== Configuration Examples
+
+=== Development (Verbose Text Logs)
+
+[source,bash]
+----
+nameserver-switcher \
+  --log-format=text \
+  --log-requests=true \
+  --log-responses=true \
+  --debug=true
+----
+
+=== Production (JSON Logs, Minimal)
+
+[source,bash]
+----
+nameserver-switcher \
+  --log-format=json \
+  --log-requests=true \
+  --log-responses=true \
+  --debug=false
+----
+
+=== Production (JSON Logs, Verbose for Debugging)
+
+[source,bash]
+----
+export LOG_FORMAT=json
+export LOG_REQUESTS=true
+export LOG_RESPONSES=true
+export DEBUG=true
+
+nameserver-switcher
+----
+
+=== Minimal Logging (Errors Only)
+
+[source,bash]
+----
+nameserver-switcher \
+  --log-requests=false \
+  --log-responses=false \
+  --debug=false
+----
+
+== Integration with Log Aggregation
+
+=== Elasticsearch / ELK Stack
+
+The JSON format is directly compatible with Elasticsearch. Use Filebeat or Fluentd to ship logs:
+
+[source,yaml]
+----
+# Filebeat configuration
+filebeat.inputs:
+  - type: container
+    paths:
+      - /var/log/containers/nameserver-switcher*.log
+    json:
+      keys_under_root: true
+      add_error_key: true
+
+output.elasticsearch:
+  hosts: ["elasticsearch:9200"]
+  index: "nameserver-switcher-%{+yyyy.MM.dd}"
+----
+
+=== Grafana Loki
+
+Use promtail to collect JSON logs:
+
+[source,yaml]
+----
+scrape_configs:
+  - job_name: nameserver-switcher
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: nameserver-switcher
+          __path__: /var/log/nameserver-switcher.log
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            timemillis: timemillis
+      - labels:
+          level:
+----
+
+=== CloudWatch Logs
+
+Configure the CloudWatch agent to parse JSON logs:
+
+[source,json]
+----
+{
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/nameserver-switcher.log",
+            "log_group_name": "nameserver-switcher",
+            "log_stream_name": "{instance_id}",
+            "timestamp_format": "%Y-%m-%dT%H:%M:%S"
+          }
+        ]
+      }
+    }
+  }
+}
+----
+
+=== Splunk
+
+JSON logs can be ingested directly by Splunk with automatic field extraction:
+
+[source]
+----
+# props.conf
+[nameserver_switcher]
+TIME_FORMAT = %s%3N
+TIME_PREFIX = "timemillis":
+MAX_TIMESTAMP_LOOKAHEAD = 13
+KV_MODE = json
+----
+
+== Kubernetes Logging
+
+When running in Kubernetes, logs are typically collected from stdout/stderr:
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nameserver-switcher
+spec:
+  template:
+    spec:
+      containers:
+      - name: nameserver-switcher
+        env:
+        - name: LOG_FORMAT
+          value: "json"
+        - name: LOG_REQUESTS
+          value: "true"
+        - name: LOG_RESPONSES
+          value: "true"
+----
+
+Logs can then be collected by:
+
+* **Fluent Bit / Fluentd**: Kubernetes DaemonSet
+* **Promtail**: For Grafana Loki
+* **CloudWatch Container Insights**: For AWS EKS
+* **Stackdriver**: For Google GKE
+
+== Querying Logs
+
+=== Using `jq` for JSON Logs
+
+[source,bash]
+----
+# Filter by log level
+cat logs.json | jq 'select(.level == "ERROR")'
+
+# Get all DNS requests for a specific domain
+cat logs.json | jq 'select(.message == "DNS request received" and .fields.name | contains("example.com"))'
+
+# Calculate average response time
+cat logs.json | jq 'select(.message == "DNS response sent") | .fields.duration_ms' | awk '{sum+=$1; count++} END {print sum/count}'
+
+# Count requests by resolver
+cat logs.json | jq -r 'select(.message == "DNS response sent") | .fields.resolver' | sort | uniq -c
+
+# Find slow queries (>100ms)
+cat logs.json | jq 'select(.message == "DNS response sent" and .fields.duration_ms > 100)'
+----
+
+=== Using `grep` for Text Logs
+
+[source,bash]
+----
+# Filter errors
+grep '\[ERROR\]' logs.txt
+
+# Find DNS requests
+grep 'DNS request received' logs.txt
+
+# Filter by domain
+grep 'name=.*example\.com' logs.txt
+
+# Find slow responses
+grep -E 'duration_ms=[0-9]{3,}' logs.txt
+----
+
+== Best Practices
+
+1. **Use JSON format in production** for structured querying and log aggregation
+2. **Enable request/response logging** for troubleshooting DNS issues
+3. **Use debug mode sparingly** as it generates verbose output
+4. **Configure log retention** to manage storage costs
+5. **Set up alerts** for error-level logs
+6. **Use the `timemillis` field** for precise timing analysis
+7. **Correlate logs with metrics** using timestamps for debugging

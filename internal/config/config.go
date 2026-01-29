@@ -48,6 +48,9 @@ type Config struct {
 
 	// LogResponses enables logging of all DNS responses.
 	LogResponses bool
+
+	// LogFormat specifies the log output format: "text" or "json".
+	LogFormat string
 }
 
 // DefaultConfig returns a Config with default values.
@@ -66,6 +69,7 @@ func DefaultConfig() *Config {
 		Debug:            false,
 		LogRequests:      true,
 		LogResponses:     true,
+		LogFormat:        "text",
 	}
 }
 
@@ -89,6 +93,7 @@ func (c *Config) ParseFlags() {
 	pflag.BoolVar(&c.Debug, "debug", c.Debug, "Enable debug logging")
 	pflag.BoolVar(&c.LogRequests, "log-requests", c.LogRequests, "Log all DNS requests")
 	pflag.BoolVar(&c.LogResponses, "log-responses", c.LogResponses, "Log all DNS responses")
+	pflag.StringVar(&c.LogFormat, "log-format", c.LogFormat, "Log output format: text or json")
 
 	pflag.Parse()
 
@@ -139,6 +144,9 @@ func (c *Config) LoadFromEnv() {
 	}
 	if logResp := os.Getenv("LOG_RESPONSES"); logResp == "false" || logResp == "0" {
 		c.LogResponses = false
+	}
+	if logFormat := os.Getenv("LOG_FORMAT"); logFormat != "" {
+		c.LogFormat = logFormat
 	}
 }
 

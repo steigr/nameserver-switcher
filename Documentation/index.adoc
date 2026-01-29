@@ -75,6 +75,10 @@ See: link:architecture.adoc[Architecture Documentation]
 
 See: link:workflow.adoc[Workflow Documentation]
 
+== Logging
+
+See: link:logging.adoc[Logging Documentation]
+
 == Monitoring and Metrics
 
 See: link:monitoring.adoc[Monitoring Documentation]

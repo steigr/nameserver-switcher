@@ -116,6 +116,10 @@ helm install nameserver-switcher ./charts/nameserver-switcher \
 |`--log-responses`
 |Log all DNS responses
 |true
+
+|`--log-format`
+|Log output format: `text` or `json`
+|text
 |===
 
 === Environment Variables
@@ -163,34 +167,56 @@ helm install nameserver-switcher ./charts/nameserver-switcher \
 
 |`LOG_RESPONSES`
 |Log DNS responses (`false`/`0` to disable)
+
+|`LOG_FORMAT`
+|Log output format: `text` (default) or `json`
 |===
 
 == Logging
 
-The nameserver-switcher provides comprehensive logging capabilities at different levels:
+The nameserver-switcher provides comprehensive logging capabilities with support for text and JSON output formats.
+
+=== Log Formats
+
+**Text format** (default): Human-readable logs with millisecond-precision timestamps.
+
+**JSON format**: Structured logs for log aggregation systems. Each entry includes a `timemillis` field with Unix timestamp in milliseconds.
 
 === Normal Logging (LOG_REQUESTS=true, LOG_RESPONSES=true)
 
 When enabled (default), logs all DNS requests and responses:
 
+**Text format:**
 [source]
 ----
-[REQUEST] protocol=udp type=A name=example.com. from=127.0.0.1:54321
-[RESPONSE] name=example.com. rcode=NOERROR answers=1 resolver=system duration=12.345ms
+2026/01/29 14:32:15.123 [INFO] DNS request received protocol=udp type=A name=example.com. from=127.0.0.1:54321
+2026/01/29 14:32:15.135 [INFO] DNS response sent name=example.com. rcode=NOERROR answer_count=1 resolver=system duration_ms=12.345
+----
+
+**JSON format:**
+[source,json]
+----
+{"timemillis":1738161135123,"time":"2026-01-29T14:32:15.123Z","level":"INFO","message":"DNS request received","fields":{"protocol":"udp","type":"A","name":"example.com.","from":"127.0.0.1:54321"}}
+{"timemillis":1738161135135,"time":"2026-01-29T14:32:15.135Z","level":"INFO","message":"DNS response sent","fields":{"name":"example.com.","rcode":"NOERROR","answer_count":1,"resolver":"system","duration_ms":12.345}}
 ----
 
 === Debug Logging (DEBUG=true)
 
 When debug mode is enabled, provides detailed information about pattern matching and resolution:
 
+**Text format:**
 [source]
 ----
-[DEBUG] REQUEST_PATTERN matched: pattern=".*\\.example\\.com$" request="test.example.com"
-[DEBUG] CNAME_PATTERN matched: pattern=".*\\.cdn\\..*" cname="test.cdn.provider.net"
-[DEBUG] Queried nameserver: 1.1.1.1:53
-[DEBUG] Full response: ;; opcode: QUERY, status: NOERROR, id: 12345
-;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 0
-...
+2026/01/29 14:32:15.136 [DEBUG] REQUEST_PATTERN matched pattern=.*\.example\.com$ request=test.example.com
+2026/01/29 14:32:15.137 [DEBUG] CNAME_PATTERN matched pattern=.*\.cdn\.* cname=test.cdn.provider.net
+2026/01/29 14:32:15.138 [DEBUG] Queried nameserver resolver=explicit
+----
+
+**JSON format:**
+[source,json]
+----
+{"timemillis":1738161135136,"time":"2026-01-29T14:32:15.136Z","level":"DEBUG","message":"REQUEST_PATTERN matched","fields":{"pattern":".*\\.example\\.com$","request":"test.example.com"}}
+{"timemillis":1738161135137,"time":"2026-01-29T14:32:15.137Z","level":"DEBUG","message":"CNAME_PATTERN matched","fields":{"pattern":".*\\.cdn\\..*","cname":"test.cdn.provider.net"}}
 ----
 
 === Logging Configuration Examples
@@ -201,10 +227,16 @@ When debug mode is enabled, provides detailed information about pattern matching
 nameserver-switcher --log-requests=false --log-responses=false
 ----
 
-**Full debug logging:**
+**Full debug logging (text format):**
 [source,bash]
 ----
 nameserver-switcher --debug --log-requests --log-responses
+----
+
+**Production JSON logging:**
+[source,bash]
+----
+nameserver-switcher --log-format=json --log-requests --log-responses
 ----
 
 **Environment variable configuration:**
@@ -213,8 +245,11 @@ nameserver-switcher --debug --log-requests --log-responses
 export DEBUG=true
 export LOG_REQUESTS=true
 export LOG_RESPONSES=true
+export LOG_FORMAT=json
 nameserver-switcher
 ----
+
+For detailed logging documentation, see link:Documentation/logging.adoc[Logging Documentation].
 
 == Usage Examples
 
@@ -341,6 +376,7 @@ For more detailed documentation, see the link:Documentation/[Documentation] fold
 * link:Documentation/index.adoc[Main Documentation]
 * link:Documentation/architecture.adoc[Architecture]
 * link:Documentation/workflow.adoc[Workflow and Operation Modes]
+* link:Documentation/logging.adoc[Logging]
 * link:Documentation/monitoring.adoc[Monitoring and Metrics]
 * link:Documentation/helm-deployment.adoc[Helm Deployment Guide]
 

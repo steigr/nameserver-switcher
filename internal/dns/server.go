@@ -4,13 +4,13 @@ package dns
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"time"
 
 	"github.com/miekg/dns"
 
 	"github.com/steigr/nameserver-switcher/internal/config"
+	"github.com/steigr/nameserver-switcher/internal/logging"
 	"github.com/steigr/nameserver-switcher/internal/metrics"
 	"github.com/steigr/nameserver-switcher/internal/resolver"
 )
@@ -69,14 +69,14 @@ func (s *Server) Start() error {
 	errCh := make(chan error, 2)
 
 	go func() {
-		log.Printf("Starting DNS server (UDP) on %s:%d", s.addr, s.port)
+		logging.Infof("Starting DNS server (UDP) on %s:%d", s.addr, s.port)
 		if err := s.udpServer.ListenAndServe(); err != nil {
 			errCh <- fmt.Errorf("UDP server failed: %w", err)
 		}
 	}()
 
 	go func() {
-		log.Printf("Starting DNS server (TCP) on %s:%d", s.addr, s.port)
+		logging.Infof("Starting DNS server (TCP) on %s:%d", s.addr, s.port)
 		if err := s.tcpServer.ListenAndServe(); err != nil {
 			errCh <- fmt.Errorf("TCP server failed: %w", err)
 		}
@@ -133,7 +133,12 @@ func (s *Server) handleRequest(w dns.ResponseWriter, req *dns.Msg) {
 
 	// Log request if enabled
 	if s.config != nil && s.config.LogRequests {
-		log.Printf("[REQUEST] protocol=%s type=%s name=%s from=%s", protocol, qtype, qname, w.RemoteAddr())
+		logging.LogDNSRequest(logging.DNSRequest{
+			Protocol: protocol,
+			Type:     qtype,
+			Name:     qname,
+			From:     w.RemoteAddr().String(),
+		})
 	}
 
 	if s.metrics != nil {
@@ -149,7 +154,7 @@ func (s *Server) handleRequest(w dns.ResponseWriter, req *dns.Msg) {
 	// Route the request
 	result, err := s.router.Route(ctx, req)
 	if err != nil {
-		log.Printf("Error routing request: %v", err)
+		logging.Errorf("Error routing request: %v", err)
 		if s.metrics != nil {
 			s.metrics.RecordError("routing")
 		}
@@ -186,28 +191,36 @@ func (s *Server) handleRequest(w dns.ResponseWriter, req *dns.Msg) {
 	if s.config != nil && s.config.LogResponses {
 		rcode := dns.RcodeToString[result.Response.Rcode]
 		answerCount := len(result.Response.Answer)
-		log.Printf("[RESPONSE] name=%s rcode=%s answers=%d resolver=%s duration=%.3fms",
-			qname, rcode, answerCount, result.ResolverUsed, duration*1000)
+		logging.LogDNSResponse(logging.DNSResponse{
+			Name:           qname,
+			Rcode:          rcode,
+			AnswerCount:    answerCount,
+			Resolver:       result.ResolverUsed,
+			DurationMs:     duration * 1000,
+			RequestMatched: result.RequestMatched,
+			CNAMEMatched:   result.CNAMEMatched,
+		})
 	}
 
 	// Debug logging
 	if s.config != nil && s.config.Debug {
+		debug := logging.DNSDebug{
+			Resolver: result.ResolverUsed,
+		}
 		if result.RequestMatched {
-			log.Printf("[DEBUG] REQUEST_PATTERN matched: pattern=%q request=%q",
-				result.MatchedPattern, qname)
+			debug.MatchedPattern = result.MatchedPattern
+			debug.Request = qname
 		}
 		if result.CNAMEMatched {
 			// Extract CNAME from response
 			cnames := resolver.ExtractCNAME(result.Response)
-			cnameStr := ""
 			if len(cnames) > 0 {
-				cnameStr = cnames[0]
+				debug.CNAMEPattern = result.CNAMEPattern
+				debug.CNAME = cnames[0]
 			}
-			log.Printf("[DEBUG] CNAME_PATTERN matched: pattern=%q cname=%q",
-				result.CNAMEPattern, cnameStr)
 		}
-		log.Printf("[DEBUG] Queried nameserver: %s", result.ResolverUsed)
-		log.Printf("[DEBUG] Full response: %s", result.Response.String())
+		debug.FullResponse = result.Response.String()
+		logging.LogDNSDebug(debug)
 	}
 
 	// Set response ID to match request
@@ -215,7 +228,7 @@ func (s *Server) handleRequest(w dns.ResponseWriter, req *dns.Msg) {
 
 	// Write response
 	if err := w.WriteMsg(result.Response); err != nil {
-		log.Printf("Error writing response: %v", err)
+		logging.Errorf("Error writing response: %v", err)
 		if s.metrics != nil {
 			s.metrics.RecordError("write")
 		}

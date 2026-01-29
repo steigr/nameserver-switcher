@@ -444,6 +444,165 @@ EXPLICIT_RESOLVER="169.254.169.253:53"
 * `api.aws.company.com` → AWS Route53 → Optimal AWS routing
 * `web.company.com` → System Resolver → Regular DNS
 
+=== Scenario 4: Kubernetes Service Discovery
+
+**Objective:** Route Kubernetes service discovery to cluster DNS while external queries go to corporate DNS
+
+**Configuration:**
+
+[source,bash]
+----
+# Match Kubernetes internal domains
+REQUEST_PATTERNS=".*\.svc\.cluster\.local$
+.*\.pod\.cluster\.local$"
+
+# Match Kubernetes service CNAMEs
+CNAME_PATTERNS=".*\.svc\.cluster\.local$"
+
+# Use CoreDNS for Kubernetes resolution
+EXPLICIT_RESOLVER="kube-dns.kube-system.svc.cluster.local:53"
+----
+
+**Workflow:**
+
+* `myservice.default.svc.cluster.local` → Kubernetes DNS → Pod IPs
+* `external-api.company.com` → System Resolver → Corporate DNS
+
+=== Scenario 5: Azure SQL Failover Groups (Auto-Connectivity Mode)
+
+**Objective:** Intelligently route Azure SQL Failover Group connections based on regional proximity using private endpoints.
+
+Azure SQL Failover Groups use a DNS-based routing mechanism. When connecting to a failover group endpoint (e.g., `myfailovergroup.database.windows.net`), Azure DNS returns a CNAME pointing to the current primary server. The server name includes the region (e.g., `myserver-westeurope.database.windows.net` or `myserver-northeurope.database.windows.net`).
+
+In auto-connectivity mode with private endpoints:
+
+* **Same-region server**: Use Azure's default DNS to get the redirect IP (public routing optimization)
+* **Cross-region server**: Use private DNS zone to resolve the private endpoint address
+
+**Architecture:**
+
+[source]
+----
+Application in West Europe
+           │
+           ▼
+┌─────────────────────────────────────┐
+│  myfailovergroup.database.windows.net │
+└─────────────────────────────────────┘
+           │
+           ▼ (DNS CNAME)
+    ┌──────┴──────┐
+    │             │
+    ▼             ▼
+Primary in     Secondary in
+West Europe    North Europe
+    │             │
+    ▼             ▼
+CNAME:         CNAME:
+myserver-      myserver-
+westeurope.    northeurope.
+database.      database.
+windows.net    windows.net
+    │             │
+    ▼             ▼
+Azure DNS      Private DNS
+(Redirect IP)  (Private EP)
+----
+
+**Configuration:**
+
+[source,bash]
+----
+# Match Azure SQL failover group patterns
+REQUEST_PATTERNS=".*\.database\.windows\.net$"
+
+# Match servers in the LOCAL region (West Europe in this example)
+# These should use Azure DNS for redirect IP optimization
+CNAME_PATTERNS=".*-westeurope\.database\.windows\.net$"
+
+# Use Private DNS Zone resolver for cross-region (private endpoint resolution)
+# This is the SYSTEM resolver - used when CNAME doesn't match local region
+# Points to Azure Private DNS Zone linked to VNet
+# System resolver (default): Azure VNet DNS (168.63.129.16) or custom DNS
+
+# Use Azure public DNS for local region servers
+# Explicit resolver returns redirect IPs for geo-optimized routing
+EXPLICIT_RESOLVER="168.63.129.16:53"
+----
+
+**Workflow Example 1 - Primary in Same Region (West Europe):**
+
+[source]
+----
+Query: myfailovergroup.database.windows.net
+Application Region: West Europe
+Current Primary: West Europe
+
+Step 1: REQUEST_PATTERN ".*\.database\.windows\.net$" matches
+        → Query Explicit Resolver (Azure DNS)
+
+Step 2: Explicit Resolver returns:
+        myfailovergroup.database.windows.net CNAME myserver-westeurope.database.windows.net
+
+Step 3: CNAME_PATTERN ".*-westeurope\.database\.windows\.net$" matches
+        → Use Explicit Resolver response
+
+Step 4: Returns Azure redirect IP for optimized local routing
+        → Application connects via Azure backbone (low latency)
+----
+
+**Workflow Example 2 - Primary in Different Region (Failover to North Europe):**
+
+[source]
+----
+Query: myfailovergroup.database.windows.net
+Application Region: West Europe
+Current Primary: North Europe (after failover)
+
+Step 1: REQUEST_PATTERN ".*\.database\.windows\.net$" matches
+        → Query Explicit Resolver (Azure DNS)
+
+Step 2: Explicit Resolver returns:
+        myfailovergroup.database.windows.net CNAME myserver-northeurope.database.windows.net
+
+Step 3: CNAME_PATTERN ".*-westeurope\.database\.windows\.net$" does NOT match
+        (Server is in North Europe, not West Europe)
+        → Fallback to System Resolver (Private DNS Zone)
+
+Step 4: System Resolver (Private DNS Zone) returns:
+        myserver-northeurope.database.windows.net A 10.1.2.3 (Private Endpoint IP)
+        → Application connects via private endpoint (secure, no public internet)
+----
+
+**Benefits:**
+
+* **Local region traffic**: Uses Azure's optimized redirect IP for best performance
+* **Cross-region traffic**: Uses private endpoints for security and reliability
+* **Automatic failover handling**: No application changes needed when primary changes
+* **Cost optimization**: Local traffic uses Azure backbone, cross-region uses private link
+
+**Multi-Region Deployment:**
+
+For applications deployed in multiple regions, configure each region with its own pattern:
+
+.West Europe Application
+[source,bash]
+----
+REQUEST_PATTERNS=".*\.database\.windows\.net$"
+CNAME_PATTERNS=".*-westeurope\.database\.windows\.net$"
+EXPLICIT_RESOLVER="168.63.129.16:53"
+----
+
+.North Europe Application
+[source,bash]
+----
+REQUEST_PATTERNS=".*\.database\.windows\.net$"
+CNAME_PATTERNS=".*-northeurope\.database\.windows\.net$"
+EXPLICIT_RESOLVER="168.63.129.16:53"
+----
+
+**Note:** The system resolver should be configured to resolve private endpoints via Azure Private DNS Zones linked to your VNet.
+
 == Metrics and Observability
 
 The router tracks detailed metrics for each mode:

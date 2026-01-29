@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,6 +16,7 @@ import (
 	dnsserver "github.com/steigr/nameserver-switcher/internal/dns"
 	grpcserver "github.com/steigr/nameserver-switcher/internal/grpc"
 	"github.com/steigr/nameserver-switcher/internal/health"
+	"github.com/steigr/nameserver-switcher/internal/logging"
 	"github.com/steigr/nameserver-switcher/internal/matcher"
 	"github.com/steigr/nameserver-switcher/internal/metrics"
 	"github.com/steigr/nameserver-switcher/internal/resolver"
@@ -35,6 +35,17 @@ type App struct {
 
 // NewApp creates a new application instance with the given configuration.
 func NewApp(cfg *config.Config) (*App, error) {
+	// Initialize logger
+	logFormat := logging.FormatText
+	if cfg.LogFormat == "json" {
+		logFormat = logging.FormatJSON
+	}
+	logger := logging.NewLogger(logging.Config{
+		Format: logFormat,
+		Debug:  cfg.Debug,
+	})
+	logging.SetDefault(logger)
+
 	// Create health checker
 	healthChecker := health.NewChecker()
 
@@ -56,21 +67,21 @@ func NewApp(cfg *config.Config) (*App, error) {
 	var requestResolver resolver.Resolver
 	if cfg.RequestResolver != "" {
 		requestResolver = resolver.NewDNSResolver(cfg.RequestResolver, false, "request")
-		log.Printf("Using request resolver: %s", cfg.RequestResolver)
+		logging.Infof("Using request resolver: %s", cfg.RequestResolver)
 	}
 
 	var explicitResolver resolver.Resolver
 	if cfg.ExplicitResolver != "" {
 		explicitResolver = resolver.NewDNSResolver(cfg.ExplicitResolver, true, "explicit")
-		log.Printf("Using explicit resolver: %s", cfg.ExplicitResolver)
+		logging.Infof("Using explicit resolver: %s", cfg.ExplicitResolver)
 	}
 
 	systemResolver, err := resolver.NewSystemResolver()
 	if err != nil {
-		log.Printf("Warning: Failed to create system resolver, using fallback: %v", err)
+		logging.Warnf("Failed to create system resolver, using fallback: %v", err)
 		systemResolver = resolver.NewSystemResolverWithServers([]string{"8.8.8.8:53", "8.8.4.4:53"})
 	}
-	log.Printf("Using system resolvers: %v", systemResolver.Servers())
+	logging.Infof("Using system resolvers: %v", systemResolver.Servers())
 
 	// Create router
 	router := resolver.NewRouter(resolver.RouterConfig{
@@ -128,42 +139,42 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 // Start starts all the application servers.
 func (a *App) Start() error {
-	log.Println("Starting nameserver-switcher...")
+	logging.Info("Starting nameserver-switcher...")
 
 	// Start DNS server
 	if err := a.DNSServer.Start(); err != nil {
 		return fmt.Errorf("failed to start DNS server: %w", err)
 	}
-	log.Printf("DNS server listening on %s", a.DNSServer.Addr())
+	logging.Infof("DNS server listening on %s", a.DNSServer.Addr())
 
 	// Start gRPC server
 	if err := a.GRPCServer.Start(); err != nil {
 		return fmt.Errorf("failed to start gRPC server: %w", err)
 	}
-	log.Printf("gRPC server listening on %s", a.GRPCServer.Addr())
+	logging.Infof("gRPC server listening on %s", a.GRPCServer.Addr())
 
 	// Start HTTP server
 	go func() {
-		log.Printf("HTTP server listening on %s", a.HTTPServer.Addr)
+		logging.Infof("HTTP server listening on %s", a.HTTPServer.Addr)
 		if err := a.HTTPServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("HTTP server error: %v", err)
+			logging.Errorf("HTTP server error: %v", err)
 		}
 	}()
 
 	// Mark as ready
 	a.HealthChecker.SetReady(true)
-	log.Println("Server is ready")
+	logging.Info("Server is ready")
 
 	// Log configuration summary
-	log.Printf("Request patterns: %d configured", len(a.Config.RequestPatterns))
-	log.Printf("CNAME patterns: %d configured", len(a.Config.CNAMEPatterns))
+	logging.Infof("Request patterns: %d configured", len(a.Config.RequestPatterns))
+	logging.Infof("CNAME patterns: %d configured", len(a.Config.CNAMEPatterns))
 
 	return nil
 }
 
 // Shutdown gracefully shuts down all servers.
 func (a *App) Shutdown(ctx context.Context) error {
-	log.Println("Shutting down...")
+	logging.Info("Shutting down...")
 
 	// Mark as not ready
 	a.HealthChecker.SetReady(false)
@@ -171,17 +182,17 @@ func (a *App) Shutdown(ctx context.Context) error {
 	var shutdownErr error
 
 	if err := a.HTTPServer.Shutdown(ctx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
+		logging.Errorf("HTTP server shutdown error: %v", err)
 		shutdownErr = err
 	}
 
 	if err := a.GRPCServer.Shutdown(ctx); err != nil {
-		log.Printf("gRPC server shutdown error: %v", err)
+		logging.Errorf("gRPC server shutdown error: %v", err)
 		shutdownErr = err
 	}
 
 	if err := a.DNSServer.Shutdown(ctx); err != nil {
-		log.Printf("DNS server shutdown error: %v", err)
+		logging.Errorf("DNS server shutdown error: %v", err)
 		shutdownErr = err
 	}
 
@@ -189,7 +200,7 @@ func (a *App) Shutdown(ctx context.Context) error {
 		return fmt.Errorf("shutdown completed with errors: %w", shutdownErr)
 	}
 
-	log.Println("Shutdown completed successfully")
+	logging.Info("Shutdown completed successfully")
 	return nil
 }
 
@@ -204,7 +215,7 @@ func (a *App) Run() error {
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
 
-	log.Printf("Received signal %v, shutting down...", sig)
+	logging.Infof("Received signal %v, shutting down...", sig)
 
 	// Create shutdown context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -220,15 +231,19 @@ func main() {
 	cfg.ParseFlags()
 
 	if err := cfg.Validate(); err != nil {
-		log.Fatalf("Invalid configuration: %v", err)
+		// Use fmt for fatal errors before logger is initialized
+		fmt.Fprintf(os.Stderr, "Invalid configuration: %v\n", err)
+		os.Exit(1)
 	}
 
 	app, err := NewApp(cfg)
 	if err != nil {
-		log.Fatalf("Failed to create application: %v", err)
+		fmt.Fprintf(os.Stderr, "Failed to create application: %v\n", err)
+		os.Exit(1)
 	}
 
 	if err := app.Run(); err != nil {
-		log.Fatalf("Application error: %v", err)
+		logging.Errorf("Application error: %v", err)
+		os.Exit(1)
 	}
 }
