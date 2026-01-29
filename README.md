@@ -64,6 +64,9 @@ helm install nameserver-switcher ./charts/nameserver-switcher \
 | `--grpc-port` | Port for gRPC server | 5354 |
 | `--http-listen-addr` | Address for HTTP health/metrics server | "0.0.0.0" |
 | `--http-port` | Port for HTTP server | 8080 |
+| `--debug` | Enable debug logging | false |
+| `--log-requests` | Log all DNS requests | true |
+| `--log-responses` | Log all DNS responses | true |
 
 ### Environment Variables
 
@@ -79,6 +82,55 @@ helm install nameserver-switcher ./charts/nameserver-switcher \
 | `GRPC_PORT` | Port for gRPC server |
 | `HTTP_LISTEN_ADDR` | Address for HTTP server |
 | `HTTP_PORT` | Port for HTTP server |
+| `DEBUG` | Enable debug logging (`true`/`1` to enable) |
+| `LOG_REQUESTS` | Log DNS requests (`false`/`0` to disable) |
+| `LOG_RESPONSES` | Log DNS responses (`false`/`0` to disable) |
+
+## Logging
+
+The nameserver-switcher provides comprehensive logging capabilities at different levels:
+
+### Normal Logging (LOG_REQUESTS=true, LOG_RESPONSES=true)
+
+When enabled (default), logs all DNS requests and responses:
+
+```
+[REQUEST] protocol=udp type=A name=example.com. from=127.0.0.1:54321
+[RESPONSE] name=example.com. rcode=NOERROR answers=1 resolver=system duration=12.345ms
+```
+
+### Debug Logging (DEBUG=true)
+
+When debug mode is enabled, provides detailed information about pattern matching and resolution:
+
+```
+[DEBUG] REQUEST_PATTERN matched: pattern=".*\\.example\\.com$" request="test.example.com"
+[DEBUG] CNAME_PATTERN matched: pattern=".*\\.cdn\\..*" cname="test.cdn.provider.net"
+[DEBUG] Queried nameserver: 1.1.1.1:53
+[DEBUG] Full response: ;; opcode: QUERY, status: NOERROR, id: 12345
+;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 0
+...
+```
+
+### Logging Configuration Examples
+
+**Minimal logging (errors only):**
+```bash
+nameserver-switcher --log-requests=false --log-responses=false
+```
+
+**Full debug logging:**
+```bash
+nameserver-switcher --debug --log-requests --log-responses
+```
+
+**Environment variable configuration:**
+```bash
+export DEBUG=true
+export LOG_REQUESTS=true
+export LOG_RESPONSES=true
+nameserver-switcher
+```
 
 ## Usage Examples
 

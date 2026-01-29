@@ -1,3 +1,6 @@
 /.idea/
 /test-results/
 /bin/
+/nameserver-switcher
+/*.sh
+/coverage.out

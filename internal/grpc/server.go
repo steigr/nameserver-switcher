@@ -279,6 +279,8 @@ func (s *Server) Addr() string {
 // Query implements the CoreDNS DnsService Query RPC method.
 // This allows CoreDNS to use the grpc plugin to forward DNS queries.
 func (s *Server) Query(ctx context.Context, req *coredns.DnsPacket) (*coredns.DnsPacket, error) {
+	start := time.Now()
+
 	// Parse the incoming DNS message
 	msg := new(dns.Msg)
 	if err := msg.Unpack(req.Msg); err != nil {
@@ -288,9 +290,21 @@ func (s *Server) Query(ctx context.Context, req *coredns.DnsPacket) (*coredns.Dn
 	// Increment request counter
 	atomic.AddUint64(&s.totalRequests, 1)
 
+	// Get query details for logging
+	qtype := "unknown"
+	qname := ""
+	if len(msg.Question) > 0 {
+		qtype = dns.TypeToString[msg.Question[0].Qtype]
+		qname = msg.Question[0].Name
+	}
+
+	// Log request if enabled
+	if s.cfg != nil && s.cfg.LogRequests {
+		log.Printf("[REQUEST] protocol=grpc type=%s name=%s", qtype, qname)
+	}
+
 	// Record metrics if available
 	if s.metrics != nil && len(msg.Question) > 0 {
-		qtype := dns.TypeToString[msg.Question[0].Qtype]
 		s.metrics.RecordRequest("grpc-coredns", qtype)
 	}
 
@@ -307,6 +321,36 @@ func (s *Server) Query(ctx context.Context, req *coredns.DnsPacket) (*coredns.Dn
 
 		// Pack and return the response
 		if result.Response != nil {
+			duration := time.Since(start).Seconds()
+
+			// Log response if enabled
+			if s.cfg != nil && s.cfg.LogResponses {
+				rcode := dns.RcodeToString[result.Response.Rcode]
+				answerCount := len(result.Response.Answer)
+				log.Printf("[RESPONSE] name=%s rcode=%s answers=%d resolver=%s duration=%.3fms",
+					qname, rcode, answerCount, result.ResolverUsed, duration*1000)
+			}
+
+			// Debug logging
+			if s.cfg != nil && s.cfg.Debug {
+				if result.RequestMatched {
+					log.Printf("[DEBUG] REQUEST_PATTERN matched: pattern=%q request=%q",
+						result.MatchedPattern, qname)
+				}
+				if result.CNAMEMatched {
+					// Extract CNAME from response
+					cnames := resolver.ExtractCNAME(result.Response)
+					cnameStr := ""
+					if len(cnames) > 0 {
+						cnameStr = cnames[0]
+					}
+					log.Printf("[DEBUG] CNAME_PATTERN matched: pattern=%q cname=%q",
+						result.CNAMEPattern, cnameStr)
+				}
+				log.Printf("[DEBUG] Queried nameserver: %s", result.ResolverUsed)
+				log.Printf("[DEBUG] Full response: %s", result.Response.String())
+			}
+
 			// Ensure the response has the same ID as the request
 			result.Response.Id = msg.Id
 			packed, err := result.Response.Pack()

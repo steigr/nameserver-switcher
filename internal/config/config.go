@@ -39,6 +39,15 @@ type Config struct {
 
 	// HTTPPort is the HTTP server port for health and metrics.
 	HTTPPort int
+
+	// Debug enables debug logging.
+	Debug bool
+
+	// LogRequests enables logging of all DNS requests.
+	LogRequests bool
+
+	// LogResponses enables logging of all DNS responses.
+	LogResponses bool
 }
 
 // DefaultConfig returns a Config with default values.
@@ -54,6 +63,9 @@ func DefaultConfig() *Config {
 		DNSPort:          5353,
 		GRPCPort:         5354,
 		HTTPPort:         8080,
+		Debug:            false,
+		LogRequests:      true,
+		LogResponses:     true,
 	}
 }
 
@@ -74,6 +86,9 @@ func (c *Config) ParseFlags() {
 	pflag.IntVar(&c.DNSPort, "dns-port", c.DNSPort, "Port for DNS server")
 	pflag.IntVar(&c.GRPCPort, "grpc-port", c.GRPCPort, "Port for gRPC server")
 	pflag.IntVar(&c.HTTPPort, "http-port", c.HTTPPort, "Port for HTTP health/metrics server")
+	pflag.BoolVar(&c.Debug, "debug", c.Debug, "Enable debug logging")
+	pflag.BoolVar(&c.LogRequests, "log-requests", c.LogRequests, "Log all DNS requests")
+	pflag.BoolVar(&c.LogResponses, "log-responses", c.LogResponses, "Log all DNS responses")
 
 	pflag.Parse()
 
@@ -115,6 +130,15 @@ func (c *Config) LoadFromEnv() {
 	}
 	if addr := os.Getenv("HTTP_LISTEN_ADDR"); addr != "" {
 		c.HTTPListenAddr = addr
+	}
+	if debug := os.Getenv("DEBUG"); debug == "true" || debug == "1" {
+		c.Debug = true
+	}
+	if logReq := os.Getenv("LOG_REQUESTS"); logReq == "false" || logReq == "0" {
+		c.LogRequests = false
+	}
+	if logResp := os.Getenv("LOG_RESPONSES"); logResp == "false" || logResp == "0" {
+		c.LogResponses = false
 	}
 }
 

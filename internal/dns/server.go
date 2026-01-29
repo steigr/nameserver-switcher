@@ -10,6 +10,7 @@ import (
 
 	"github.com/miekg/dns"
 
+	"github.com/steigr/nameserver-switcher/internal/config"
 	"github.com/steigr/nameserver-switcher/internal/metrics"
 	"github.com/steigr/nameserver-switcher/internal/resolver"
 )
@@ -20,6 +21,7 @@ type Server struct {
 	tcpServer *dns.Server
 	router    *resolver.Router
 	metrics   *metrics.Metrics
+	config    *config.Config
 	addr      string
 	port      int
 }
@@ -30,6 +32,7 @@ type ServerConfig struct {
 	Port    int
 	Router  *resolver.Router
 	Metrics *metrics.Metrics
+	Config  *config.Config
 }
 
 // NewServer creates a new DNS server.
@@ -37,6 +40,7 @@ func NewServer(cfg ServerConfig) *Server {
 	s := &Server{
 		router:  cfg.Router,
 		metrics: cfg.Metrics,
+		config:  cfg.Config,
 		addr:    cfg.Addr,
 		port:    cfg.Port,
 	}
@@ -119,10 +123,17 @@ func (s *Server) handleRequest(w dns.ResponseWriter, req *dns.Msg) {
 		protocol = "tcp"
 	}
 
-	// Get query type
+	// Get query type and question
 	qtype := "unknown"
+	qname := ""
 	if len(req.Question) > 0 {
 		qtype = dns.TypeToString[req.Question[0].Qtype]
+		qname = req.Question[0].Name
+	}
+
+	// Log request if enabled
+	if s.config != nil && s.config.LogRequests {
+		log.Printf("[REQUEST] protocol=%s type=%s name=%s from=%s", protocol, qtype, qname, w.RemoteAddr())
 	}
 
 	if s.metrics != nil {
@@ -169,6 +180,34 @@ func (s *Server) handleRequest(w dns.ResponseWriter, req *dns.Msg) {
 
 		rcode := dns.RcodeToString[result.Response.Rcode]
 		s.metrics.RecordResponseCode(rcode)
+	}
+
+	// Log response if enabled
+	if s.config != nil && s.config.LogResponses {
+		rcode := dns.RcodeToString[result.Response.Rcode]
+		answerCount := len(result.Response.Answer)
+		log.Printf("[RESPONSE] name=%s rcode=%s answers=%d resolver=%s duration=%.3fms",
+			qname, rcode, answerCount, result.ResolverUsed, duration*1000)
+	}
+
+	// Debug logging
+	if s.config != nil && s.config.Debug {
+		if result.RequestMatched {
+			log.Printf("[DEBUG] REQUEST_PATTERN matched: pattern=%q request=%q",
+				result.MatchedPattern, qname)
+		}
+		if result.CNAMEMatched {
+			// Extract CNAME from response
+			cnames := resolver.ExtractCNAME(result.Response)
+			cnameStr := ""
+			if len(cnames) > 0 {
+				cnameStr = cnames[0]
+			}
+			log.Printf("[DEBUG] CNAME_PATTERN matched: pattern=%q cname=%q",
+				result.CNAMEPattern, cnameStr)
+		}
+		log.Printf("[DEBUG] Queried nameserver: %s", result.ResolverUsed)
+		log.Printf("[DEBUG] Full response: %s", result.Response.String())
 	}
 
 	// Set response ID to match request

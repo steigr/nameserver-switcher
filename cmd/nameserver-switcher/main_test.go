@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,171 +15,154 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// getFreePorts returns available ports for testing.
-func getFreePorts(t *testing.T, count int) []int {
-	ports := make([]int, count)
-	for i := 0; i < count; i++ {
-		// Use 0 to let the OS assign a free port, but since we can't do that
-		// directly for all servers, we'll use a base port and hope for the best
-		// In a real scenario, we'd use net.Listen(":0") to get free ports
-		ports[i] = 15353 + i + (time.Now().Nanosecond() % 1000)
-	}
-	return ports
+// testCounter is used to generate unique ports for each test
+var testCounter uint64
+
+// testMutex ensures tests that create apps run sequentially
+// to avoid Prometheus metric registration conflicts
+var testMutex sync.Mutex
+
+// getTestPorts returns available ports for testing.
+func getTestPorts(t *testing.T) (dnsPort, grpcPort, httpPort int) {
+	counter := atomic.AddUint64(&testCounter, 1)
+	basePort := 15000 + int(counter)*10 + (time.Now().Nanosecond() % 100)
+	return basePort, basePort + 1, basePort + 2
 }
 
-func TestNewApp_ValidConfig(t *testing.T) {
-	ports := getFreePorts(t, 3)
-	cfg := &config.Config{
-		RequestPatterns:  []string{`.*\.example\.com$`},
-		CNAMEPatterns:    []string{`.*\.cdn\.com$`},
-		RequestResolver:  "8.8.8.8:53",
-		ExplicitResolver: "1.1.1.1:53",
-		DNSListenAddr:    "127.0.0.1",
-		DNSPort:          ports[0],
-		GRPCListenAddr:   "127.0.0.1",
-		GRPCPort:         ports[1],
-		HTTPListenAddr:   "127.0.0.1",
-		HTTPPort:         ports[2],
-	}
-
-	app, err := NewApp(cfg)
-	require.NoError(t, err)
-	assert.NotNil(t, app)
-	assert.NotNil(t, app.Config)
-	assert.NotNil(t, app.HealthChecker)
-	assert.NotNil(t, app.Metrics)
-	assert.NotNil(t, app.Router)
-	assert.NotNil(t, app.DNSServer)
-	assert.NotNil(t, app.GRPCServer)
-	assert.NotNil(t, app.HTTPServer)
-}
-
-func TestNewApp_EmptyPatterns(t *testing.T) {
-	ports := getFreePorts(t, 3)
-	cfg := &config.Config{
+// getTestConfig returns a test configuration with unique ports.
+func getTestConfig(t *testing.T) *config.Config {
+	dnsPort, grpcPort, httpPort := getTestPorts(t)
+	return &config.Config{
 		RequestPatterns:  []string{},
 		CNAMEPatterns:    []string{},
 		RequestResolver:  "",
 		ExplicitResolver: "",
 		DNSListenAddr:    "127.0.0.1",
-		DNSPort:          ports[0],
+		DNSPort:          dnsPort,
 		GRPCListenAddr:   "127.0.0.1",
-		GRPCPort:         ports[1],
+		GRPCPort:         grpcPort,
 		HTTPListenAddr:   "127.0.0.1",
-		HTTPPort:         ports[2],
+		HTTPPort:         httpPort,
 	}
-
-	app, err := NewApp(cfg)
-	require.NoError(t, err)
-	assert.NotNil(t, app)
 }
 
-func TestNewApp_InvalidRequestPattern(t *testing.T) {
-	ports := getFreePorts(t, 3)
-	cfg := &config.Config{
-		RequestPatterns: []string{`[invalid`}, // Invalid regex
-		CNAMEPatterns:   []string{},
-		DNSListenAddr:   "127.0.0.1",
-		DNSPort:         ports[0],
-		GRPCListenAddr:  "127.0.0.1",
-		GRPCPort:        ports[1],
-		HTTPListenAddr:  "127.0.0.1",
-		HTTPPort:        ports[2],
-	}
+// TestNewApp tests NewApp with various configurations.
+// All NewApp tests are combined to avoid Prometheus metric registration conflicts.
+func TestNewApp(t *testing.T) {
+	testMutex.Lock()
+	defer testMutex.Unlock()
 
-	app, err := NewApp(cfg)
-	assert.Error(t, err)
-	assert.Nil(t, app)
-	assert.Contains(t, err.Error(), "request matcher")
+	t.Run("ValidConfig", func(t *testing.T) {
+		cfg := getTestConfig(t)
+		cfg.RequestPatterns = []string{`.*\.example\.com$`}
+		cfg.CNAMEPatterns = []string{`.*\.cdn\.com$`}
+		cfg.RequestResolver = "8.8.8.8:53"
+		cfg.ExplicitResolver = "1.1.1.1:53"
+
+		app, err := NewApp(cfg)
+		require.NoError(t, err)
+		assert.NotNil(t, app)
+		assert.NotNil(t, app.Config)
+		assert.NotNil(t, app.HealthChecker)
+		assert.NotNil(t, app.Metrics)
+		assert.NotNil(t, app.Router)
+		assert.NotNil(t, app.DNSServer)
+		assert.NotNil(t, app.GRPCServer)
+		assert.NotNil(t, app.HTTPServer)
+
+		// Verify config values
+		assert.Equal(t, "8.8.8.8:53", app.Config.RequestResolver)
+		assert.Equal(t, "1.1.1.1:53", app.Config.ExplicitResolver)
+		assert.Equal(t, cfg.DNSPort, app.Config.DNSPort)
+		assert.Equal(t, cfg.GRPCPort, app.Config.GRPCPort)
+		assert.Equal(t, cfg.HTTPPort, app.Config.HTTPPort)
+	})
+
+	t.Run("InvalidRequestPattern", func(t *testing.T) {
+		cfg := getTestConfig(t)
+		cfg.RequestPatterns = []string{`[invalid`}
+
+		app, err := NewApp(cfg)
+		assert.Error(t, err)
+		assert.Nil(t, app)
+		assert.Contains(t, err.Error(), "request matcher")
+	})
+
+	t.Run("InvalidCNAMEPattern", func(t *testing.T) {
+		cfg := getTestConfig(t)
+		cfg.RequestPatterns = []string{`.*\.example\.com$`}
+		cfg.CNAMEPatterns = []string{`[invalid`}
+
+		app, err := NewApp(cfg)
+		assert.Error(t, err)
+		assert.Nil(t, app)
+		assert.Contains(t, err.Error(), "CNAME matcher")
+	})
+
+	t.Run("WithoutResolvers", func(t *testing.T) {
+		cfg := getTestConfig(t)
+		cfg.RequestPatterns = []string{`.*\.example\.com$`}
+		cfg.CNAMEPatterns = []string{`.*\.cdn\.com$`}
+
+		app, err := NewApp(cfg)
+		require.NoError(t, err)
+		assert.NotNil(t, app)
+	})
+
+	t.Run("EmptyPatterns", func(t *testing.T) {
+		cfg := getTestConfig(t)
+		cfg.RequestPatterns = []string{}
+		cfg.CNAMEPatterns = []string{}
+
+		app, err := NewApp(cfg)
+		require.NoError(t, err)
+		assert.NotNil(t, app)
+	})
+
+	t.Run("MultiplePatterns", func(t *testing.T) {
+		cfg := getTestConfig(t)
+		cfg.RequestPatterns = []string{
+			`.*\.example\.com$`,
+			`.*\.test\.org$`,
+			`.*\.sample\.net$`,
+		}
+		cfg.CNAMEPatterns = []string{
+			`.*\.cdn\.com$`,
+			`.*\.edge\.net$`,
+		}
+
+		app, err := NewApp(cfg)
+		require.NoError(t, err)
+		assert.NotNil(t, app)
+		assert.Len(t, app.Config.RequestPatterns, 3)
+		assert.Len(t, app.Config.CNAMEPatterns, 2)
+	})
 }
 
-func TestNewApp_InvalidCNAMEPattern(t *testing.T) {
-	ports := getFreePorts(t, 3)
-	cfg := &config.Config{
-		RequestPatterns: []string{`.*\.example\.com$`},
-		CNAMEPatterns:   []string{`[invalid`}, // Invalid regex
-		DNSListenAddr:   "127.0.0.1",
-		DNSPort:         ports[0],
-		GRPCListenAddr:  "127.0.0.1",
-		GRPCPort:        ports[1],
-		HTTPListenAddr:  "127.0.0.1",
-		HTTPPort:        ports[2],
-	}
-
-	app, err := NewApp(cfg)
-	assert.Error(t, err)
-	assert.Nil(t, app)
-	assert.Contains(t, err.Error(), "CNAME matcher")
-}
-
-func TestNewApp_WithResolvers(t *testing.T) {
-	ports := getFreePorts(t, 3)
-	cfg := &config.Config{
-		RequestPatterns:  []string{`.*\.example\.com$`},
-		CNAMEPatterns:    []string{`.*\.cdn\.com$`},
-		RequestResolver:  "8.8.8.8:53",
-		ExplicitResolver: "1.1.1.1:53",
-		DNSListenAddr:    "127.0.0.1",
-		DNSPort:          ports[0],
-		GRPCListenAddr:   "127.0.0.1",
-		GRPCPort:         ports[1],
-		HTTPListenAddr:   "127.0.0.1",
-		HTTPPort:         ports[2],
-	}
-
-	app, err := NewApp(cfg)
-	require.NoError(t, err)
-	assert.NotNil(t, app)
-	assert.Equal(t, "8.8.8.8:53", app.Config.RequestResolver)
-	assert.Equal(t, "1.1.1.1:53", app.Config.ExplicitResolver)
-}
-
-func TestNewApp_WithoutResolvers(t *testing.T) {
-	ports := getFreePorts(t, 3)
-	cfg := &config.Config{
-		RequestPatterns:  []string{`.*\.example\.com$`},
-		CNAMEPatterns:    []string{`.*\.cdn\.com$`},
-		RequestResolver:  "",
-		ExplicitResolver: "",
-		DNSListenAddr:    "127.0.0.1",
-		DNSPort:          ports[0],
-		GRPCListenAddr:   "127.0.0.1",
-		GRPCPort:         ports[1],
-		HTTPListenAddr:   "127.0.0.1",
-		HTTPPort:         ports[2],
-	}
-
-	app, err := NewApp(cfg)
-	require.NoError(t, err)
-	assert.NotNil(t, app)
-}
-
+// TestApp_StartAndShutdown tests the Start and Shutdown methods.
 func TestApp_StartAndShutdown(t *testing.T) {
-	ports := getFreePorts(t, 3)
-	cfg := &config.Config{
-		RequestPatterns:  []string{`.*\.example\.com$`},
-		CNAMEPatterns:    []string{`.*\.cdn\.com$`},
-		RequestResolver:  "8.8.8.8:53",
-		ExplicitResolver: "1.1.1.1:53",
-		DNSListenAddr:    "127.0.0.1",
-		DNSPort:          ports[0],
-		GRPCListenAddr:   "127.0.0.1",
-		GRPCPort:         ports[1],
-		HTTPListenAddr:   "127.0.0.1",
-		HTTPPort:         ports[2],
-	}
+	testMutex.Lock()
+	defer testMutex.Unlock()
+
+	cfg := getTestConfig(t)
+	cfg.RequestPatterns = []string{`.*\.example\.com$`}
+	cfg.CNAMEPatterns = []string{`.*\.cdn\.com$`}
+	cfg.RequestResolver = "8.8.8.8:53"
+	cfg.ExplicitResolver = "1.1.1.1:53"
 
 	app, err := NewApp(cfg)
 	require.NoError(t, err)
+
+	// Initially not ready
+	assert.False(t, app.HealthChecker.IsReady())
 
 	// Start the application
 	err = app.Start()
 	require.NoError(t, err)
 
-	// Give servers time to start
 	time.Sleep(100 * time.Millisecond)
 
-	// Verify health checker is ready
+	// Verify health checker is ready after start
 	assert.True(t, app.HealthChecker.IsReady())
 
 	// Shutdown the application
@@ -191,18 +176,14 @@ func TestApp_StartAndShutdown(t *testing.T) {
 	assert.False(t, app.HealthChecker.IsReady())
 }
 
+// TestApp_HTTPEndpoints tests the HTTP endpoints.
 func TestApp_HTTPEndpoints(t *testing.T) {
-	ports := getFreePorts(t, 3)
-	cfg := &config.Config{
-		RequestPatterns: []string{`.*\.example\.com$`},
-		CNAMEPatterns:   []string{`.*\.cdn\.com$`},
-		DNSListenAddr:   "127.0.0.1",
-		DNSPort:         ports[0],
-		GRPCListenAddr:  "127.0.0.1",
-		GRPCPort:        ports[1],
-		HTTPListenAddr:  "127.0.0.1",
-		HTTPPort:        ports[2],
-	}
+	testMutex.Lock()
+	defer testMutex.Unlock()
+
+	cfg := getTestConfig(t)
+	cfg.RequestPatterns = []string{`.*\.example\.com$`}
+	cfg.CNAMEPatterns = []string{`.*\.cdn\.com$`}
 
 	app, err := NewApp(cfg)
 	require.NoError(t, err)
@@ -216,12 +197,10 @@ func TestApp_HTTPEndpoints(t *testing.T) {
 		app.Shutdown(ctx)
 	}()
 
-	// Give servers time to start
 	time.Sleep(100 * time.Millisecond)
 
-	baseURL := fmt.Sprintf("http://127.0.0.1:%d", ports[2])
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.HTTPPort)
 
-	// Test /healthz endpoint
 	t.Run("healthz", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/healthz")
 		require.NoError(t, err)
@@ -229,7 +208,6 @@ func TestApp_HTTPEndpoints(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
-	// Test /readyz endpoint
 	t.Run("readyz", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/readyz")
 		require.NoError(t, err)
@@ -237,7 +215,6 @@ func TestApp_HTTPEndpoints(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
-	// Test /livez endpoint
 	t.Run("livez", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/livez")
 		require.NoError(t, err)
@@ -245,7 +222,6 @@ func TestApp_HTTPEndpoints(t *testing.T) {
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 	})
 
-	// Test /metrics endpoint
 	t.Run("metrics", func(t *testing.T) {
 		resp, err := http.Get(baseURL + "/metrics")
 		require.NoError(t, err)
@@ -254,81 +230,16 @@ func TestApp_HTTPEndpoints(t *testing.T) {
 
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err)
-		// Should contain Prometheus metrics
 		assert.Contains(t, string(body), "go_")
 	})
 }
 
-func TestApp_ShutdownTimeout(t *testing.T) {
-	ports := getFreePorts(t, 3)
-	cfg := &config.Config{
-		RequestPatterns: []string{},
-		CNAMEPatterns:   []string{},
-		DNSListenAddr:   "127.0.0.1",
-		DNSPort:         ports[0],
-		GRPCListenAddr:  "127.0.0.1",
-		GRPCPort:        ports[1],
-		HTTPListenAddr:  "127.0.0.1",
-		HTTPPort:        ports[2],
-	}
-
-	app, err := NewApp(cfg)
-	require.NoError(t, err)
-
-	err = app.Start()
-	require.NoError(t, err)
-
-	// Give servers time to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Use a reasonable timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err = app.Shutdown(ctx)
-	assert.NoError(t, err)
-}
-
-func TestApp_MultiplePatterns(t *testing.T) {
-	ports := getFreePorts(t, 3)
-	cfg := &config.Config{
-		RequestPatterns: []string{
-			`.*\.example\.com$`,
-			`.*\.test\.org$`,
-			`.*\.sample\.net$`,
-		},
-		CNAMEPatterns: []string{
-			`.*\.cdn\.com$`,
-			`.*\.edge\.net$`,
-		},
-		DNSListenAddr:  "127.0.0.1",
-		DNSPort:        ports[0],
-		GRPCListenAddr: "127.0.0.1",
-		GRPCPort:       ports[1],
-		HTTPListenAddr: "127.0.0.1",
-		HTTPPort:       ports[2],
-	}
-
-	app, err := NewApp(cfg)
-	require.NoError(t, err)
-	assert.NotNil(t, app)
-	assert.Len(t, app.Config.RequestPatterns, 3)
-	assert.Len(t, app.Config.CNAMEPatterns, 2)
-}
-
+// TestApp_StartWithPortConflict tests that starting with conflicting ports fails.
 func TestApp_StartWithPortConflict(t *testing.T) {
-	// First app takes the ports
-	ports := getFreePorts(t, 3)
-	cfg1 := &config.Config{
-		RequestPatterns: []string{},
-		CNAMEPatterns:   []string{},
-		DNSListenAddr:   "127.0.0.1",
-		DNSPort:         ports[0],
-		GRPCListenAddr:  "127.0.0.1",
-		GRPCPort:        ports[1],
-		HTTPListenAddr:  "127.0.0.1",
-		HTTPPort:        ports[2],
-	}
+	testMutex.Lock()
+	defer testMutex.Unlock()
+
+	cfg1 := getTestConfig(t)
 
 	app1, err := NewApp(cfg1)
 	require.NoError(t, err)
@@ -342,7 +253,6 @@ func TestApp_StartWithPortConflict(t *testing.T) {
 		app1.Shutdown(ctx)
 	}()
 
-	// Give servers time to start
 	time.Sleep(100 * time.Millisecond)
 
 	// Second app tries to use same ports - should fail
@@ -350,11 +260,11 @@ func TestApp_StartWithPortConflict(t *testing.T) {
 		RequestPatterns: []string{},
 		CNAMEPatterns:   []string{},
 		DNSListenAddr:   "127.0.0.1",
-		DNSPort:         ports[0], // Same port as app1
+		DNSPort:         cfg1.DNSPort,
 		GRPCListenAddr:  "127.0.0.1",
-		GRPCPort:        ports[1],
+		GRPCPort:        cfg1.GRPCPort,
 		HTTPListenAddr:  "127.0.0.1",
-		HTTPPort:        ports[2],
+		HTTPPort:        cfg1.HTTPPort,
 	}
 
 	app2, err := NewApp(cfg2)
@@ -362,61 +272,4 @@ func TestApp_StartWithPortConflict(t *testing.T) {
 
 	err = app2.Start()
 	assert.Error(t, err, "Should fail due to port conflict")
-}
-
-func TestApp_ConfigAccessible(t *testing.T) {
-	ports := getFreePorts(t, 3)
-	cfg := &config.Config{
-		RequestPatterns:  []string{`.*\.example\.com$`},
-		CNAMEPatterns:    []string{`.*\.cdn\.com$`},
-		RequestResolver:  "8.8.8.8:53",
-		ExplicitResolver: "1.1.1.1:53",
-		DNSListenAddr:    "127.0.0.1",
-		DNSPort:          ports[0],
-		GRPCListenAddr:   "127.0.0.1",
-		GRPCPort:         ports[1],
-		HTTPListenAddr:   "127.0.0.1",
-		HTTPPort:         ports[2],
-	}
-
-	app, err := NewApp(cfg)
-	require.NoError(t, err)
-
-	// Verify config is accessible and correct
-	assert.Equal(t, cfg.RequestResolver, app.Config.RequestResolver)
-	assert.Equal(t, cfg.ExplicitResolver, app.Config.ExplicitResolver)
-	assert.Equal(t, cfg.DNSPort, app.Config.DNSPort)
-	assert.Equal(t, cfg.GRPCPort, app.Config.GRPCPort)
-	assert.Equal(t, cfg.HTTPPort, app.Config.HTTPPort)
-}
-
-func TestApp_HealthCheckerState(t *testing.T) {
-	ports := getFreePorts(t, 3)
-	cfg := &config.Config{
-		RequestPatterns: []string{},
-		CNAMEPatterns:   []string{},
-		DNSListenAddr:   "127.0.0.1",
-		DNSPort:         ports[0],
-		GRPCListenAddr:  "127.0.0.1",
-		GRPCPort:        ports[1],
-		HTTPListenAddr:  "127.0.0.1",
-		HTTPPort:        ports[2],
-	}
-
-	app, err := NewApp(cfg)
-	require.NoError(t, err)
-
-	// Initially not ready
-	assert.False(t, app.HealthChecker.IsReady())
-
-	// After start, should be ready
-	err = app.Start()
-	require.NoError(t, err)
-	assert.True(t, app.HealthChecker.IsReady())
-
-	// After shutdown, should not be ready
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	app.Shutdown(ctx)
-	assert.False(t, app.HealthChecker.IsReady())
 }

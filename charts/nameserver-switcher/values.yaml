@@ -127,3 +127,6 @@ extraVolumeMounts: []
 
 # Extra volumes
 extraVolumes: []
+
+# DNS Policy. Use the node resolver by default.
+dnsPolicy: "Default"

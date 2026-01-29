@@ -87,6 +87,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		Port:    cfg.DNSPort,
 		Router:  router,
 		Metrics: m,
+		Config:  cfg,
 	})
 
 	// Create gRPC server

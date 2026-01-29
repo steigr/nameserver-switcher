@@ -2,6 +2,8 @@
 package metrics
 
 import (
+	"sync"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -18,12 +20,34 @@ type Metrics struct {
 	DNSResponseCodes  *prometheus.CounterVec
 }
 
+var (
+	defaultMetrics *Metrics
+	metricsOnce    sync.Once
+)
+
 // NewMetrics creates a new Metrics instance with all metrics registered.
+// Due to Prometheus global registry constraints, this returns a singleton
+// when called with the same namespace.
 func NewMetrics(namespace string) *Metrics {
 	if namespace == "" {
 		namespace = "nameserver_switcher"
 	}
 
+	// Use singleton pattern for the default namespace to avoid
+	// duplicate registration errors with promauto
+	if namespace == "nameserver_switcher" {
+		metricsOnce.Do(func() {
+			defaultMetrics = createMetrics(namespace)
+		})
+		return defaultMetrics
+	}
+
+	// For other namespaces (e.g., testing), create new metrics
+	return createMetrics(namespace)
+}
+
+// createMetrics creates the actual metrics instances.
+func createMetrics(namespace string) *Metrics {
 	return &Metrics{
 		RequestsTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
