@@ -15,6 +15,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Test constants
+const (
+	testGoogleDNS     = "8.8.8.8:53"
+	testCloudflareDNS = "1.1.1.1:53"
+)
+
 // testCounter is used to generate unique ports for each test
 var testCounter uint64
 
@@ -56,8 +62,8 @@ func TestNewApp(t *testing.T) {
 		cfg := getTestConfig(t)
 		cfg.RequestPatterns = []string{`.*\.example\.com$`}
 		cfg.CNAMEPatterns = []string{`.*\.cdn\.com$`}
-		cfg.RequestResolver = "8.8.8.8:53"
-		cfg.ExplicitResolver = "1.1.1.1:53"
+		cfg.RequestResolver = testGoogleDNS
+		cfg.ExplicitResolver = testCloudflareDNS
 
 		app, err := NewApp(cfg)
 		require.NoError(t, err)
@@ -71,8 +77,8 @@ func TestNewApp(t *testing.T) {
 		assert.NotNil(t, app.HTTPServer)
 
 		// Verify config values
-		assert.Equal(t, "8.8.8.8:53", app.Config.RequestResolver)
-		assert.Equal(t, "1.1.1.1:53", app.Config.ExplicitResolver)
+		assert.Equal(t, testGoogleDNS, app.Config.RequestResolver)
+		assert.Equal(t, testCloudflareDNS, app.Config.ExplicitResolver)
 		assert.Equal(t, cfg.DNSPort, app.Config.DNSPort)
 		assert.Equal(t, cfg.GRPCPort, app.Config.GRPCPort)
 		assert.Equal(t, cfg.HTTPPort, app.Config.HTTPPort)
@@ -147,8 +153,8 @@ func TestApp_StartAndShutdown(t *testing.T) {
 	cfg := getTestConfig(t)
 	cfg.RequestPatterns = []string{`.*\.example\.com$`}
 	cfg.CNAMEPatterns = []string{`.*\.cdn\.com$`}
-	cfg.RequestResolver = "8.8.8.8:53"
-	cfg.ExplicitResolver = "1.1.1.1:53"
+	cfg.RequestResolver = testGoogleDNS
+	cfg.ExplicitResolver = testCloudflareDNS
 
 	app, err := NewApp(cfg)
 	require.NoError(t, err)

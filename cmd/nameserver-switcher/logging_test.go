@@ -20,7 +20,7 @@ func TestLogging_NormalMode(t *testing.T) {
 	cfg.LogResponses = true
 	cfg.Debug = false
 	cfg.RequestPatterns = []string{`.*\.example\.com$`}
-	cfg.RequestResolver = "8.8.8.8:53"
+	cfg.RequestResolver = testGoogleDNS
 
 	app, err := NewApp(cfg)
 	require.NoError(t, err)
