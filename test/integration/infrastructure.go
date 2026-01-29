@@ -87,6 +87,8 @@ func Setup(ctx context.Context, mode TestMode) (*Infrastructure, error) {
 				"--address=/bar-match.example.com/127.0.0.99",
 				// bar-nomatch.example.com returns 127.0.0.3
 				"--address=/bar-nomatch.example.com/127.0.0.3",
+				// direct.example.com has NO CNAME, direct A record - returns 127.0.0.4 on system
+				"--address=/direct.example.com/127.0.0.4",
 			},
 			ExposedPorts: []string{"53/udp", "53/tcp"},
 			WaitingFor:   wait.ForLog("started").WithStartupTimeout(60 * time.Second),
@@ -123,6 +125,9 @@ func Setup(ctx context.Context, mode TestMode) (*Infrastructure, error) {
 				"--cname=foo.example.com,bar-match.example.com",
 				// bar-match.example.com returns 127.0.0.2 on explicit resolver
 				"--address=/bar-match.example.com/127.0.0.2",
+				// direct.example.com has NO CNAME, direct A record - returns 127.0.0.5 on explicit
+				// If system resolver is used correctly, we should get 127.0.0.4 (not 127.0.0.5)
+				"--address=/direct.example.com/127.0.0.5",
 			},
 			ExposedPorts: []string{"53/udp", "53/tcp"},
 			WaitingFor:   wait.ForLog("started").WithStartupTimeout(60 * time.Second),

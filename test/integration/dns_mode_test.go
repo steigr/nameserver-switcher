@@ -258,6 +258,52 @@ func (s *DNSModeSuite) TestDNSMasqExplicitReturnsCorrectIPForBarMatch() {
 		"Expected A record 127.0.0.2, got: %s", result)
 }
 
+// TestDirectExampleComNoCNAME tests querying direct.example.com which has NO CNAME.
+// This tests Mode 2: System Fallback (No CNAME) - when request pattern matches but
+// explicit resolver returns a direct A record (no CNAME), it should fall back to system resolver.
+// Expected: 127.0.0.4 (from system resolver), NOT 127.0.0.5 (from explicit resolver)
+func (s *DNSModeSuite) TestDirectExampleComNoCNAME() {
+	hostPort, err := s.infra.GetCoreDNSHostPort(s.ctx)
+	require.NoError(s.T(), err)
+
+	result := s.dns.QueryA(hostPort, "direct.example.com")
+
+	actual := ""
+	if result.Error != nil {
+		actual = fmt.Sprintf("Error: %v", result.Error)
+	} else if result.Response != nil {
+		ips := result.GetARecords()
+		if len(ips) > 0 {
+			actual = fmt.Sprintf("A=%s", ips[0])
+		} else {
+			actual = fmt.Sprintf("Rcode=%d, no A records", result.Response.Rcode)
+		}
+	}
+
+	s.T().Log("")
+	s.T().Log("--- direct.example.com via CoreDNS (NO CNAME test) ---")
+	s.T().Logf("Query:    dig @%s direct.example.com A", hostPort)
+	s.T().Logf("Expected: A=127.0.0.4 (from system resolver - no CNAME means fallback)")
+	s.T().Logf("Actual:   %s", actual)
+	s.T().Log("Note: If we got 127.0.0.5, it means explicit resolver was incorrectly used")
+
+	passed := result.Error == nil && result.Response != nil && strings.Contains(actual, "127.0.0.4")
+	s.results = append(s.results, testResult{
+		name:     "direct.example.com (No CNAME - should use system resolver)",
+		query:    "direct.example.com",
+		server:   hostPort,
+		expected: "A=127.0.0.4",
+		actual:   actual,
+		passed:   passed,
+	})
+
+	require.NoError(s.T(), result.Error, "DNS query failed")
+	require.NotNil(s.T(), result.Response, "No DNS response")
+	assert.Contains(s.T(), actual, "127.0.0.4",
+		"Expected A=127.0.0.4 (system resolver), but got %s. "+
+			"If got 127.0.0.5, the explicit resolver was incorrectly used when there's no CNAME.", actual)
+}
+
 func TestDNSModeSuite(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")

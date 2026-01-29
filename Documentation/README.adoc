@@ -1,0 +1,186 @@
+= nameserver-switcher Documentation
+:toc:
+:icons: font
+
+== Documentation Structure
+
+This directory contains comprehensive documentation for the nameserver-switcher project.
+
+== Documents
+
+=== link:index.adoc[Main Documentation (index.adoc)]
+
+The main entry point for all documentation. Start here for an overview and links to all other documentation.
+
+=== link:architecture.adoc[Architecture Documentation]
+
+Detailed information about:
+
+* Overall system architecture
+* Component descriptions
+* Integration with CoreDNS
+* Deployment patterns (sidecar vs. separate service)
+* Data flow and request processing
+* Performance and security considerations
+
+=== link:workflow.adoc[Workflow and Operation Modes]
+
+Covers:
+
+* Router decision logic and flow diagrams
+* Routing modes comparison table (System Fallback, Explicit Direct, Explicit Recursive, System Override)
+* Detailed mode descriptions with examples
+* DNS vs. gRPC operation modes
+* Configuration scenarios (split-horizon DNS, CDN optimization, multi-cloud)
+* Best practices for pattern design and debugging
+
+=== link:monitoring.adoc[Monitoring and Metrics]
+
+Complete guide to:
+
+* Available Prometheus metrics
+* Metric types and labels
+* PromQL query examples
+* Grafana dashboard configuration
+* Alerting rules for common scenarios
+* Health endpoints
+* ServiceMonitor configuration
+* Logging integration
+* Observability best practices
+
+=== link:helm-deployment.adoc[Helm Deployment Guide]
+
+Production deployment guide including:
+
+* Chart configuration reference
+* Deployment scenarios (standalone, sidecar, HA, multi-environment)
+* Advanced configuration (secrets, annotations, network policies)
+* Monitoring integration
+* Troubleshooting guide
+* Upgrade and rollback procedures
+* CI/CD integration (ArgoCD, Flux)
+* Best practices
+
+== Quick Links
+
+* **Installation**: See link:index.adoc#quick-start[Quick Start] in the main documentation
+* **CoreDNS Integration**: See link:architecture.adoc#integration-with-coredns[Architecture - CoreDNS Integration]
+* **Routing Logic**: See link:workflow.adoc#decision-flow[Workflow - Decision Flow]
+* **Metrics**: See link:monitoring.adoc#available-metrics[Monitoring - Available Metrics]
+* **Helm Values**: See link:helm-deployment.adoc#configuration-values[Helm Deployment - Configuration Values]
+
+== Viewing the Documentation
+
+=== AsciiDoc Rendering
+
+These documents are written in AsciiDoc format. You can view them in several ways:
+
+==== 1. GitHub (Recommended)
+
+GitHub natively renders AsciiDoc files. Simply browse to any `.adoc` file on GitHub.
+
+==== 2. AsciiDoctor CLI
+
+Install AsciiDoctor and convert to HTML:
+
+[source,bash]
+----
+# Install AsciiDoctor
+gem install asciidoctor
+
+# Convert to HTML
+asciidoctor index.adoc
+
+# Convert all documents
+asciidoctor *.adoc
+
+# View in browser
+open index.html
+----
+
+==== 3. VS Code
+
+Install the AsciiDoc extension:
+
+[source]
+----
+Name: AsciiDoc
+Id: asciidoctor.asciidoctor-vscode
+----
+
+==== 4. IntelliJ IDEA / PyCharm
+
+AsciiDoc plugin is available in the JetBrains marketplace.
+
+==== 5. Online Viewers
+
+Upload `.adoc` files to online viewers like:
+
+* https://asciidoclive.com/
+* https://asciidocfx.com/
+
+== Contributing to Documentation
+
+When contributing to the documentation:
+
+1. Follow the existing structure and formatting
+2. Use proper AsciiDoc syntax
+3. Include code examples where appropriate
+4. Test rendering before committing
+5. Keep line length reasonable (80-120 characters)
+6. Use semantic line breaks (one sentence per line)
+
+=== AsciiDoc Syntax Reference
+
+[source,asciidoc]
+----
+= Document Title
+:toc: left
+:icons: font
+
+== Section 1
+Text content
+
+=== Subsection 1.1
+
+==== Sub-subsection 1.1.1
+
+== Section 2
+
+[source,bash]
+----
+# Code block
+echo "Hello"
+\----
+
+[NOTE]
+====
+Note block for important information
+====
+
+[WARNING]
+====
+Warning block for cautions
+====
+
+* Bulleted list item 1
+* Bulleted list item 2
+
+. Numbered list item 1
+. Numbered list item 2
+
+link:other-doc.adoc[Link to other document]
+
+https://example.com[External link]
+----
+
+== Support
+
+For issues or questions:
+
+* **Issues**: https://github.com/steigr/nameserver-switcher/issues
+* **Discussions**: https://github.com/steigr/nameserver-switcher/discussions
+
+== License
+
+Documentation is licensed under the same license as the nameserver-switcher project (MIT License).

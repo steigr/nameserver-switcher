@@ -1,0 +1,657 @@
+ = Monitoring and Metrics
+:toc: left
+:toclevels: 3
+:numbered:
+:icons: font
+:source-highlighter: rouge
+
+== Overview
+
+nameserver-switcher provides comprehensive Prometheus metrics for monitoring DNS routing behavior, performance, and errors. All metrics are exposed via the HTTP server on the `/metrics` endpoint.
+
+== Metrics Endpoint
+
+**URL:** `http://<nameserver-switcher>:8080/metrics`
+
+**Format:** Prometheus text exposition format
+
+**Authentication:** None (configure network policies for security)
+
+== Available Metrics
+
+=== Request Metrics
+
+==== nameserver_switcher_requests_total
+
+**Type:** Counter
+
+**Description:** Total number of DNS requests received
+
+**Labels:**
+
+* `protocol`: Request protocol (`udp`, `tcp`, `grpc`)
+* `type`: DNS query type (`A`, `AAAA`, `CNAME`, `MX`, etc.)
+
+**Example:**
+[source,prometheus]
+----
+# HELP nameserver_switcher_requests_total Total number of DNS requests received
+# TYPE nameserver_switcher_requests_total counter
+nameserver_switcher_requests_total{protocol="udp",type="A"} 1523
+nameserver_switcher_requests_total{protocol="tcp",type="A"} 47
+nameserver_switcher_requests_total{protocol="grpc",type="A"} 234
+nameserver_switcher_requests_total{protocol="udp",type="AAAA"} 891
+----
+
+**Use Cases:**
+
+* Monitor total query volume
+* Track protocol distribution (UDP vs TCP vs gRPC)
+* Identify query type trends
+* Detect unusual traffic patterns
+
+**PromQL Examples:**
+
+[source,promql]
+----
+# Total requests per second (all protocols)
+rate(nameserver_switcher_requests_total[5m])
+
+# Requests by protocol
+sum by (protocol) (rate(nameserver_switcher_requests_total[5m]))
+
+# IPv6 (AAAA) vs IPv4 (A) ratio
+sum(rate(nameserver_switcher_requests_total{type="AAAA"}[5m]))
+/
+sum(rate(nameserver_switcher_requests_total{type="A"}[5m]))
+----
+
+=== Duration Metrics
+
+==== nameserver_switcher_request_duration_seconds
+
+**Type:** Histogram
+
+**Description:** Duration of DNS request processing in seconds
+
+**Labels:**
+
+* `resolver`: Which resolver was used (`system`, `explicit`, resolver name)
+
+**Buckets:** Default Prometheus buckets (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10)
+
+**Example:**
+[source,prometheus]
+----
+# HELP nameserver_switcher_request_duration_seconds Duration of DNS request processing
+# TYPE nameserver_switcher_request_duration_seconds histogram
+nameserver_switcher_request_duration_seconds_bucket{resolver="system",le="0.005"} 234
+nameserver_switcher_request_duration_seconds_bucket{resolver="system",le="0.01"} 456
+nameserver_switcher_request_duration_seconds_bucket{resolver="system",le="0.025"} 789
+nameserver_switcher_request_duration_seconds_bucket{resolver="system",le="+Inf"} 1000
+nameserver_switcher_request_duration_seconds_sum{resolver="system"} 12.34
+nameserver_switcher_request_duration_seconds_count{resolver="system"} 1000
+----
+
+**Use Cases:**
+
+* Monitor query latency
+* Compare resolver performance
+* Detect slow queries
+* Set SLO/SLA targets
+* Identify performance degradation
+
+**PromQL Examples:**
+
+[source,promql]
+----
+# 95th percentile latency by resolver
+histogram_quantile(0.95,
+  sum by (resolver, le) (
+    rate(nameserver_switcher_request_duration_seconds_bucket[5m])
+  )
+)
+
+# Average latency
+rate(nameserver_switcher_request_duration_seconds_sum[5m])
+/
+rate(nameserver_switcher_request_duration_seconds_count[5m])
+
+# Queries slower than 100ms
+sum(rate(nameserver_switcher_request_duration_seconds_bucket{le="0.1"}[5m]))
+----
+
+=== Resolver Metrics
+
+==== nameserver_switcher_resolver_used_total
+
+**Type:** Counter
+
+**Description:** Total number of times each resolver was used
+
+**Labels:**
+
+* `resolver`: Resolver name (`system`, `explicit`, custom name)
+
+**Example:**
+[source,prometheus]
+----
+# HELP nameserver_switcher_resolver_used_total Total number of times each resolver was used
+# TYPE nameserver_switcher_resolver_used_total counter
+nameserver_switcher_resolver_used_total{resolver="system"} 5432
+nameserver_switcher_resolver_used_total{resolver="explicit"} 3210
+----
+
+**Use Cases:**
+
+* Track resolver usage distribution
+* Verify pattern matching effectiveness
+* Monitor failover behavior
+* Capacity planning per resolver
+
+**PromQL Examples:**
+
+[source,promql]
+----
+# Resolver usage rate
+rate(nameserver_switcher_resolver_used_total[5m])
+
+# Percentage of queries to explicit resolver
+sum(rate(nameserver_switcher_resolver_used_total{resolver="explicit"}[5m]))
+/
+sum(rate(nameserver_switcher_resolver_used_total[5m]))
+* 100
+
+# Resolver distribution (current)
+sum by (resolver) (nameserver_switcher_resolver_used_total)
+----
+
+=== Pattern Matching Metrics
+
+==== nameserver_switcher_pattern_matches_total
+
+**Type:** Counter
+
+**Description:** Total number of request pattern matches
+
+**Labels:**
+
+* `pattern`: The regex pattern that matched
+
+**Example:**
+[source,prometheus]
+----
+# HELP nameserver_switcher_pattern_matches_total Total number of request pattern matches
+# TYPE nameserver_switcher_pattern_matches_total counter
+nameserver_switcher_pattern_matches_total{pattern=".*\\.example\\.com$"} 2345
+nameserver_switcher_pattern_matches_total{pattern=".*\\.internal\\.company\\.com$"} 567
+----
+
+**Use Cases:**
+
+* Monitor which patterns are matching
+* Identify unused patterns
+* Validate pattern configuration
+* Track pattern effectiveness
+
+**PromQL Examples:**
+
+[source,promql]
+----
+# Pattern match rate
+rate(nameserver_switcher_pattern_matches_total[5m])
+
+# Most frequently matched patterns
+topk(10, sum by (pattern) (nameserver_switcher_pattern_matches_total))
+
+# Patterns with zero matches (unused patterns)
+count by (pattern) (nameserver_switcher_pattern_matches_total == 0)
+----
+
+==== nameserver_switcher_cname_matches_total
+
+**Type:** Counter
+
+**Description:** Total number of CNAME pattern matches
+
+**Labels:**
+
+* `pattern`: The CNAME regex pattern that matched
+
+**Example:**
+[source,prometheus]
+----
+# HELP nameserver_switcher_cname_matches_total Total number of CNAME pattern matches
+# TYPE nameserver_switcher_cname_matches_total counter
+nameserver_switcher_cname_matches_total{pattern=".*\\.cdn\\.example\\.com$"} 1234
+nameserver_switcher_cname_matches_total{pattern=".*\\.cloudfront\\.net$"} 890
+----
+
+**Use Cases:**
+
+* Monitor CNAME-based routing
+* Identify CNAME patterns in use
+* Track CDN usage patterns
+* Validate CNAME configuration
+
+**PromQL Examples:**
+
+[source,promql]
+----
+# CNAME match rate
+rate(nameserver_switcher_cname_matches_total[5m])
+
+# CNAME vs non-CNAME routing ratio
+sum(rate(nameserver_switcher_cname_matches_total[5m]))
+/
+sum(rate(nameserver_switcher_pattern_matches_total[5m]))
+* 100
+----
+
+=== Error Metrics
+
+==== nameserver_switcher_errors_total
+
+**Type:** Counter
+
+**Description:** Total number of errors encountered
+
+**Labels:**
+
+* `type`: Error type (`resolver`, `routing`, `parsing`, etc.)
+
+**Example:**
+[source,prometheus]
+----
+# HELP nameserver_switcher_errors_total Total number of errors
+# TYPE nameserver_switcher_errors_total counter
+nameserver_switcher_errors_total{type="resolver"} 12
+nameserver_switcher_errors_total{type="routing"} 3
+nameserver_switcher_errors_total{type="parsing"} 1
+----
+
+**Use Cases:**
+
+* Monitor error rates
+* Alert on elevated errors
+* Troubleshoot resolver issues
+* Track system health
+
+**PromQL Examples:**
+
+[source,promql]
+----
+# Error rate by type
+rate(nameserver_switcher_errors_total[5m])
+
+# Total error rate
+sum(rate(nameserver_switcher_errors_total[5m]))
+
+# Error ratio (errors per request)
+sum(rate(nameserver_switcher_errors_total[5m]))
+/
+sum(rate(nameserver_switcher_requests_total[5m]))
+* 100
+----
+
+=== Response Code Metrics
+
+==== nameserver_switcher_dns_response_codes_total
+
+**Type:** Counter
+
+**Description:** Total number of DNS responses by response code
+
+**Labels:**
+
+* `rcode`: DNS response code (`NOERROR`, `NXDOMAIN`, `SERVFAIL`, etc.)
+
+**Example:**
+[source,prometheus]
+----
+# HELP nameserver_switcher_dns_response_codes_total Total number of DNS responses by response code
+# TYPE nameserver_switcher_dns_response_codes_total counter
+nameserver_switcher_dns_response_codes_total{rcode="NOERROR"} 8765
+nameserver_switcher_dns_response_codes_total{rcode="NXDOMAIN"} 432
+nameserver_switcher_dns_response_codes_total{rcode="SERVFAIL"} 12
+----
+
+**Use Cases:**
+
+* Monitor DNS health
+* Track failed resolutions
+* Alert on SERVFAIL spikes
+* Identify misconfigurations
+
+**PromQL Examples:**
+
+[source,promql]
+----
+# Response code distribution
+sum by (rcode) (rate(nameserver_switcher_dns_response_codes_total[5m]))
+
+# NXDOMAIN rate
+rate(nameserver_switcher_dns_response_codes_total{rcode="NXDOMAIN"}[5m])
+
+# Error ratio (non-NOERROR responses)
+sum(rate(nameserver_switcher_dns_response_codes_total{rcode!="NOERROR"}[5m]))
+/
+sum(rate(nameserver_switcher_dns_response_codes_total[5m]))
+* 100
+----
+
+=== Connection Metrics
+
+==== nameserver_switcher_active_connections
+
+**Type:** Gauge
+
+**Description:** Number of currently active connections
+
+**Example:**
+[source,prometheus]
+----
+# HELP nameserver_switcher_active_connections Number of active connections
+# TYPE nameserver_switcher_active_connections gauge
+nameserver_switcher_active_connections 42
+----
+
+**Use Cases:**
+
+* Monitor concurrent connections
+* Detect connection leaks
+* Capacity planning
+* Load monitoring
+
+**PromQL Examples:**
+
+[source,promql]
+----
+# Current active connections
+nameserver_switcher_active_connections
+
+# Maximum connections in last hour
+max_over_time(nameserver_switcher_active_connections[1h])
+
+# Average connections
+avg_over_time(nameserver_switcher_active_connections[5m])
+----
+
+== Monitoring Dashboards
+
+=== Grafana Dashboard Example
+
+==== Panel 1: Request Rate
+
+[source,json]
+----
+{
+  "title": "DNS Request Rate",
+  "targets": [
+    {
+      "expr": "sum(rate(nameserver_switcher_requests_total[5m]))",
+      "legendFormat": "Total Requests/sec"
+    },
+    {
+      "expr": "sum by (protocol) (rate(nameserver_switcher_requests_total[5m]))",
+      "legendFormat": "{{protocol}}"
+    }
+  ]
+}
+----
+
+==== Panel 2: Query Latency (p50, p95, p99)
+
+[source,json]
+----
+{
+  "title": "Query Latency",
+  "targets": [
+    {
+      "expr": "histogram_quantile(0.50, sum(rate(nameserver_switcher_request_duration_seconds_bucket[5m])) by (le))",
+      "legendFormat": "p50"
+    },
+    {
+      "expr": "histogram_quantile(0.95, sum(rate(nameserver_switcher_request_duration_seconds_bucket[5m])) by (le))",
+      "legendFormat": "p95"
+    },
+    {
+      "expr": "histogram_quantile(0.99, sum(rate(nameserver_switcher_request_duration_seconds_bucket[5m])) by (le))",
+      "legendFormat": "p99"
+    }
+  ]
+}
+----
+
+==== Panel 3: Resolver Usage Distribution
+
+[source,json]
+----
+{
+  "title": "Resolver Usage",
+  "type": "piechart",
+  "targets": [
+    {
+      "expr": "sum by (resolver) (nameserver_switcher_resolver_used_total)",
+      "legendFormat": "{{resolver}}"
+    }
+  ]
+}
+----
+
+==== Panel 4: Pattern Matches
+
+[source,json]
+----
+{
+  "title": "Top Pattern Matches",
+  "targets": [
+    {
+      "expr": "topk(5, sum by (pattern) (rate(nameserver_switcher_pattern_matches_total[5m])))",
+      "legendFormat": "{{pattern}}"
+    }
+  ]
+}
+----
+
+== Alerting Rules
+
+=== Prometheus Alerting Rules
+
+==== High Error Rate
+
+[source,yaml]
+----
+groups:
+- name: nameserver_switcher
+  rules:
+  - alert: HighDNSErrorRate
+    expr: |
+      sum(rate(nameserver_switcher_errors_total[5m]))
+      /
+      sum(rate(nameserver_switcher_requests_total[5m]))
+      > 0.05
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High DNS error rate detected"
+      description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+----
+
+==== High Latency
+
+[source,yaml]
+----
+  - alert: HighDNSLatency
+    expr: |
+      histogram_quantile(0.95,
+        sum(rate(nameserver_switcher_request_duration_seconds_bucket[5m])) by (le, resolver)
+      ) > 0.5
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High DNS query latency on {{ $labels.resolver }}"
+      description: "P95 latency is {{ $value }}s (threshold: 0.5s)"
+----
+
+==== Resolver Failures
+
+[source,yaml]
+----
+  - alert: ResolverFailures
+    expr: |
+      rate(nameserver_switcher_dns_response_codes_total{rcode="SERVFAIL"}[5m]) > 1
+    for: 5m
+    labels:
+      severity: critical
+    annotations:
+      summary: "DNS resolver returning SERVFAIL"
+      description: "SERVFAIL rate: {{ $value }} queries/sec"
+----
+
+==== No Traffic
+
+[source,yaml]
+----
+  - alert: NoTraffic
+    expr: |
+      sum(rate(nameserver_switcher_requests_total[5m])) == 0
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "No DNS traffic received"
+      description: "nameserver-switcher has received no requests for 10 minutes"
+----
+
+==== Pattern Not Matching
+
+[source,yaml]
+----
+  - alert: PatternNotMatching
+    expr: |
+      rate(nameserver_switcher_pattern_matches_total[1h]) == 0
+    for: 1h
+    labels:
+      severity: info
+    annotations:
+      summary: "Pattern {{ $labels.pattern }} has no matches"
+      description: "Pattern may be misconfigured or unused"
+----
+
+== ServiceMonitor for Prometheus Operator
+
+If using Prometheus Operator, configure a ServiceMonitor:
+
+[source,yaml]
+----
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nameserver-switcher
+  labels:
+    app: nameserver-switcher
+spec:
+  selector:
+    matchLabels:
+      app: nameserver-switcher
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+----
+
+The Helm chart includes this when `metrics.serviceMonitor.enabled=true`.
+
+== Health Endpoints
+
+In addition to metrics, nameserver-switcher provides health check endpoints:
+
+=== Liveness Probe
+
+**Endpoint:** `/livez`
+
+**Purpose:** Indicates if the application is alive
+
+**Success Response:** `200 OK`
+
+**Kubernetes Config:**
+[source,yaml]
+----
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 10
+----
+
+=== Readiness Probe
+
+**Endpoint:** `/readyz`
+
+**Purpose:** Indicates if the application is ready to serve traffic
+
+**Success Response:** `200 OK`
+
+**Kubernetes Config:**
+[source,yaml]
+----
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 5
+----
+
+== Logging Integration
+
+nameserver-switcher provides structured logging that can be integrated with log aggregation systems.
+
+=== Log Levels
+
+* **INFO**: Normal operations (requests, responses)
+* **DEBUG**: Detailed routing decisions, pattern matches
+* **ERROR**: Error conditions
+
+=== Log Format
+
+[source]
+----
+[LEVEL] message key1=value1 key2=value2
+----
+
+=== Example Logs
+
+[source]
+----
+[REQUEST] protocol=udp type=A name=example.com. from=10.0.1.5:12345
+[DEBUG] REQUEST_PATTERN matched: pattern=".*\.example\.com$" request="example.com"
+[DEBUG] Queried nameserver: explicit
+[RESPONSE] name=example.com. rcode=NOERROR answers=1 resolver=explicit duration=12.5ms
+[ERROR] explicit resolver failed: resolver="8.8.8.8:53" error="timeout"
+----
+
+=== Log Aggregation
+
+Compatible with:
+
+* **Loki**: Using promtail for log collection
+* **Elasticsearch**: Via Filebeat or Fluentd
+* **Splunk**: Via universal forwarder
+* **CloudWatch Logs**: Via CloudWatch agent
+
+== Observability Best Practices
+
+1. **Set Up Dashboards**: Create Grafana dashboards for key metrics
+2. **Configure Alerts**: Set up critical alerts (high error rate, high latency)
+3. **Monitor Resolver Health**: Track resolver-specific metrics
+4. **Track Pattern Efficiency**: Monitor which patterns are actually matching
+5. **Capacity Planning**: Use connection and request metrics for scaling decisions
+6. **Log Correlation**: Correlate metrics with logs for troubleshooting
+7. **SLO Definition**: Define SLOs based on latency and error rate metrics
+8. **Regular Review**: Periodically review unused patterns and optimization opportunities

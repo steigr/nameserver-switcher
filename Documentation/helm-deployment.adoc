@@ -1,0 +1,857 @@
+= Helm Deployment Guide
+:toc: left
+:toclevels: 3
+:numbered:
+:icons: font
+:source-highlighter: rouge
+
+== Overview
+
+The nameserver-switcher Helm chart provides a production-ready deployment for Kubernetes environments. The chart includes all necessary resources for running nameserver-switcher with CoreDNS integration.
+
+== Chart Information
+
+**Chart Name:** `nameserver-switcher`
+
+**Chart Location:** `charts/nameserver-switcher/`
+
+**Default App Version:** Latest release
+
+**Kubernetes Version:** >= 1.19
+
+== Quick Start
+
+=== Basic Installation
+
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  --set patterns.request[0]=".*\\.example\\.com$" \
+  --set resolvers.explicit="8.8.8.8:53"
+----
+
+=== Installation with Custom Values
+
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  -f custom-values.yaml
+----
+
+=== Upgrade Existing Release
+
+[source,bash]
+----
+helm upgrade nameserver-switcher ./charts/nameserver-switcher \
+  -f custom-values.yaml
+----
+
+=== Uninstall
+
+[source,bash]
+----
+helm uninstall nameserver-switcher
+----
+
+== Configuration Values
+
+=== Complete values.yaml Reference
+
+[source,yaml]
+----
+# Number of replicas for high availability
+replicaCount: 1
+
+# Container image configuration
+image:
+  repository: ghcr.io/steigr/nameserver-switcher
+  pullPolicy: IfNotPresent
+  tag: ""  # Defaults to chart appVersion
+
+# Image pull secrets for private registries
+imagePullSecrets: []
+
+# Override release name
+nameOverride: ""
+fullnameOverride: ""
+
+# DNS server configuration
+dns:
+  port: 53
+  serviceType: ClusterIP  # ClusterIP, NodePort, or LoadBalancer
+
+# gRPC server configuration
+grpc:
+  port: 5354
+  serviceType: ClusterIP
+
+# HTTP server configuration (metrics/health)
+http:
+  port: 8080
+
+# Pattern matching configuration
+patterns:
+  # Request patterns - match incoming DNS queries
+  request: []
+  # Example:
+  # request:
+  #   - ".*\\.example\\.com$"
+  #   - ".*\\.internal\\.company\\.com$"
+
+  # CNAME patterns - match CNAME targets
+  cname: []
+  # Example:
+  # cname:
+  #   - ".*\\.cdn\\.example\\.com$"
+  #   - ".*\\.cloudfront\\.net$"
+
+# DNS resolver configuration
+resolvers:
+  # Explicit resolver for matched patterns
+  explicit: ""
+  # Example: "8.8.8.8:53" or "dns.example.com:53"
+
+# Service account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod security context
+podSecurityContext:
+  fsGroup: 1000
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 64Mi
+
+# Autoscaling configuration
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
+# Node selector
+nodeSelector: {}
+
+# Tolerations
+tolerations: []
+
+# Affinity rules
+affinity: {}
+
+# Prometheus metrics
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+
+# Health probes
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+----
+
+== Deployment Scenarios
+
+=== Scenario 1: Standalone DNS Proxy
+
+Deploy nameserver-switcher as a standalone DNS service.
+
+.values-standalone.yaml
+[source,yaml]
+----
+replicaCount: 2
+
+dns:
+  serviceType: LoadBalancer  # Expose externally
+
+patterns:
+  request:
+    - ".*\\.example\\.com$"
+  cname:
+    - ".*\\.cdn\\.example\\.com$"
+
+resolvers:
+  explicit: "8.8.8.8:53"
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 256Mi
+  requests:
+    cpu: 200m
+    memory: 128Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+----
+
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  -f values-standalone.yaml
+----
+
+=== Scenario 2: CoreDNS Sidecar
+
+Deploy as a sidecar alongside CoreDNS.
+
+.values-sidecar.yaml
+[source,yaml]
+----
+replicaCount: 1
+
+# Use ClusterIP since it's accessed via localhost from CoreDNS
+dns:
+  serviceType: ClusterIP
+
+patterns:
+  request:
+    - ".*\\.svc\\.cluster\\.local$"
+    - ".*\\.company\\.internal$"
+  cname:
+    - ".*\\.internal-cdn\\.com$"
+
+resolvers:
+  explicit: "10.0.0.10:53"  # Internal DNS server
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 64Mi
+----
+
+CoreDNS ConfigMap:
+[source,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+data:
+  Corefile: |
+    .:53 {
+        forward . 127.0.0.1:5353  # Forward to nameserver-switcher sidecar
+        cache 30
+        log
+        errors
+    }
+----
+
+CoreDNS Deployment with sidecar:
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coredns
+spec:
+  template:
+    spec:
+      containers:
+      # CoreDNS container
+      - name: coredns
+        image: coredns/coredns:latest
+        volumeMounts:
+        - name: config
+          mountPath: /etc/coredns
+
+      # nameserver-switcher sidecar
+      - name: nameserver-switcher
+        image: ghcr.io/steigr/nameserver-switcher:latest
+        env:
+        - name: REQUEST_PATTERNS
+          value: ".*\\.svc\\.cluster\\.local$"
+        - name: EXPLICIT_RESOLVER
+          value: "10.0.0.10:53"
+----
+
+=== Scenario 3: High Availability with gRPC
+
+Deploy with multiple replicas using gRPC mode.
+
+.values-ha-grpc.yaml
+[source,yaml]
+----
+replicaCount: 3
+
+grpc:
+  serviceType: ClusterIP
+
+patterns:
+  request:
+    - ".*\\.production\\.company\\.com$"
+  cname:
+    - ".*\\.cdn\\.company\\.com$"
+
+resolvers:
+  explicit: "prod-dns.company.com:53"
+
+# Anti-affinity to spread pods across nodes
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - nameserver-switcher
+        topologyKey: kubernetes.io/hostname
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 60
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 256Mi
+  requests:
+    cpu: 250m
+    memory: 128Mi
+
+metrics:
+  serviceMonitor:
+    enabled: true
+    labels:
+      prometheus: kube-prometheus
+----
+
+CoreDNS Corefile for gRPC:
+[source,corefile]
+----
+.:53 {
+    grpc . nameserver-switcher.default.svc.cluster.local:5354
+    cache 60
+    log
+    errors
+}
+----
+
+=== Scenario 4: Multi-Environment Configuration
+
+Use different configurations per environment using Helm values.
+
+.values-dev.yaml
+[source,yaml]
+----
+patterns:
+  request:
+    - ".*\\.dev\\.company\\.com$"
+resolvers:
+  explicit: "dev-dns.company.com:53"
+resources:
+  limits:
+    cpu: 200m
+    memory: 64Mi
+  requests:
+    cpu: 50m
+    memory: 32Mi
+----
+
+.values-prod.yaml
+[source,yaml]
+----
+replicaCount: 5
+
+patterns:
+  request:
+    - ".*\\.prod\\.company\\.com$"
+    - ".*\\.company\\.com$"
+  cname:
+    - ".*\\.cdn\\.company\\.com$"
+
+resolvers:
+  explicit: "prod-dns.company.com:53"
+
+autoscaling:
+  enabled: true
+  minReplicas: 5
+  maxReplicas: 20
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 512Mi
+  requests:
+    cpu: 500m
+    memory: 256Mi
+
+metrics:
+  serviceMonitor:
+    enabled: true
+----
+
+Deploy per environment:
+[source,bash]
+----
+# Development
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  -f values-dev.yaml \
+  --namespace dev
+
+# Production
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  -f values-prod.yaml \
+  --namespace prod
+----
+
+== Advanced Configuration
+
+=== Using Secrets for Sensitive Data
+
+Store DNS server addresses in secrets:
+
+[source,bash]
+----
+kubectl create secret generic dns-config \
+  --from-literal=explicit-resolver="10.0.0.10:53"
+----
+
+Reference in deployment:
+[source,yaml]
+----
+# In templates/deployment.yaml
+env:
+- name: EXPLICIT_RESOLVER
+  valueFrom:
+    secretKeyRef:
+      name: dns-config
+      key: explicit-resolver
+----
+
+=== Custom Annotations
+
+Add custom annotations to pods:
+
+[source,yaml]
+----
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+  vault.hashicorp.com/agent-inject: "true"
+----
+
+=== Resource Quotas
+
+For environments with resource quotas:
+
+[source,yaml]
+----
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+    ephemeral-storage: 1Gi
+  requests:
+    cpu: 100m
+    memory: 64Mi
+    ephemeral-storage: 100Mi
+----
+
+=== Network Policies
+
+Restrict network access:
+
+[source,yaml]
+----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: nameserver-switcher
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: nameserver-switcher
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow DNS queries from CoreDNS
+  - from:
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 5353
+    - protocol: TCP
+      port: 5353
+  # Allow gRPC from CoreDNS
+  - from:
+    - podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: TCP
+      port: 5354
+  # Allow metrics scraping from Prometheus
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  # Allow DNS queries to upstream resolvers
+  - to:
+    - podSelector: {}
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow DNS queries to external resolvers
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+----
+
+== Monitoring Integration
+
+=== Prometheus Operator
+
+When using Prometheus Operator, enable ServiceMonitor:
+
+[source,yaml]
+----
+metrics:
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels:
+      release: prometheus-operator
+----
+
+=== Grafana Dashboard
+
+Import the dashboard from ConfigMap:
+
+[source,yaml]
+----
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nameserver-switcher-dashboard
+  labels:
+    grafana_dashboard: "1"
+data:
+  nameserver-switcher.json: |
+    {
+      "dashboard": {
+        "title": "nameserver-switcher",
+        "panels": [ ... ]
+      }
+    }
+----
+
+== Troubleshooting
+
+=== Check Pod Status
+
+[source,bash]
+----
+kubectl get pods -l app.kubernetes.io/name=nameserver-switcher
+----
+
+=== View Logs
+
+[source,bash]
+----
+kubectl logs -l app.kubernetes.io/name=nameserver-switcher --tail=100 -f
+----
+
+=== Test DNS Resolution
+
+[source,bash]
+----
+# Get service IP
+kubectl get svc nameserver-switcher
+
+# Test DNS query
+kubectl run -it --rm debug --image=nicolaka/netshoot --restart=Never -- \
+  dig @nameserver-switcher.default.svc.cluster.local example.com
+----
+
+=== Check Metrics
+
+[source,bash]
+----
+kubectl port-forward svc/nameserver-switcher 8080:8080
+curl http://localhost:8080/metrics
+----
+
+=== Verify Configuration
+
+[source,bash]
+----
+# Check environment variables
+kubectl exec -it deployment/nameserver-switcher -- env | grep -E "PATTERN|RESOLVER"
+----
+
+=== Common Issues
+
+==== Pods Not Starting
+
+Check events:
+[source,bash]
+----
+kubectl describe pod -l app.kubernetes.io/name=nameserver-switcher
+----
+
+Common causes:
+* Image pull errors
+* Resource quota exceeded
+* Invalid pattern configuration
+
+==== DNS Queries Not Working
+
+Verify service:
+[source,bash]
+----
+kubectl get svc nameserver-switcher
+kubectl get endpoints nameserver-switcher
+----
+
+Check logs for errors:
+[source,bash]
+----
+kubectl logs -l app.kubernetes.io/name=nameserver-switcher | grep ERROR
+----
+
+==== High Memory Usage
+
+Adjust resources:
+[source,yaml]
+----
+resources:
+  limits:
+    memory: 256Mi  # Increase if needed
+----
+
+Enable autoscaling:
+[source,yaml]
+----
+autoscaling:
+  enabled: true
+  targetMemoryUtilizationPercentage: 70
+----
+
+== Upgrade Guide
+
+=== Version Upgrade
+
+[source,bash]
+----
+# Check current version
+helm list
+
+# Update chart
+helm upgrade nameserver-switcher ./charts/nameserver-switcher \
+  --reuse-values
+
+# Or with new values
+helm upgrade nameserver-switcher ./charts/nameserver-switcher \
+  -f values.yaml
+----
+
+=== Rolling Update Strategy
+
+The chart uses RollingUpdate strategy by default:
+
+[source,yaml]
+----
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 0
+    maxSurge: 1
+----
+
+=== Rollback
+
+[source,bash]
+----
+# View history
+helm history nameserver-switcher
+
+# Rollback to previous version
+helm rollback nameserver-switcher
+
+# Rollback to specific revision
+helm rollback nameserver-switcher 2
+----
+
+== Best Practices
+
+1. **Use Version Tags**: Always specify image tags in production
+2. **Enable Autoscaling**: For production environments with variable load
+3. **Set Resource Limits**: Prevent resource exhaustion
+4. **Use Pod Anti-Affinity**: Spread replicas across nodes for HA
+5. **Enable Monitoring**: Use ServiceMonitor for Prometheus integration
+6. **Configure Health Probes**: Ensure proper liveness and readiness checks
+7. **Use Secrets**: Store sensitive configuration in Kubernetes secrets
+8. **Test in Staging**: Always test configuration changes in non-production first
+9. **Document Patterns**: Keep documentation of regex patterns and their purpose
+10. **Monitor Metrics**: Set up alerts for error rates and latency
+
+== CI/CD Integration
+
+=== GitOps with ArgoCD
+
+.application.yaml
+[source,yaml]
+----
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nameserver-switcher
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/steigr/nameserver-switcher.git
+    targetRevision: HEAD
+    path: charts/nameserver-switcher
+    helm:
+      valueFiles:
+      - values-prod.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+----
+
+=== Flux CD
+
+.helmrelease.yaml
+[source,yaml]
+----
+apiVersion: helm.toolkit.fluxcd.io/v2beta1
+kind: HelmRelease
+metadata:
+  name: nameserver-switcher
+  namespace: default
+spec:
+  interval: 5m
+  chart:
+    spec:
+      chart: ./charts/nameserver-switcher
+      sourceRef:
+        kind: GitRepository
+        name: nameserver-switcher
+        namespace: flux-system
+  values:
+    replicaCount: 3
+    patterns:
+      request:
+        - ".*\\.example\\.com$"
+    resolvers:
+      explicit: "8.8.8.8:53"
+----
+
+== Appendix
+
+=== Chart Structure
+
+[source]
+----
+charts/nameserver-switcher/
+├── Chart.yaml           # Chart metadata
+├── values.yaml          # Default values
+├── README.md            # Chart README
+└── templates/
+    ├── _helpers.tpl     # Template helpers
+    ├── configmap.yaml   # Configuration
+    ├── deployment.yaml  # Deployment resource
+    ├── service.yaml     # Service resources
+    ├── serviceaccount.yaml
+    └── servicemonitor.yaml  # Prometheus ServiceMonitor
+----
+
+=== Useful Commands
+
+[source,bash]
+----
+# Dry run to see generated manifests
+helm install nameserver-switcher ./charts/nameserver-switcher --dry-run --debug
+
+# Template locally
+helm template nameserver-switcher ./charts/nameserver-switcher -f values.yaml
+
+# Lint chart
+helm lint ./charts/nameserver-switcher
+
+# Package chart
+helm package ./charts/nameserver-switcher
+
+# View values
+helm get values nameserver-switcher
+----

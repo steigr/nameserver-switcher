@@ -1,0 +1,123 @@
+= nameserver-switcher Documentation
+:toc: left
+:toclevels: 3
+:numbered:
+:icons: font
+:source-highlighter: rouge
+
+[abstract]
+--
+nameserver-switcher is an intelligent DNS proxy server with pattern-based routing capabilities. It provides both DNS and gRPC interfaces for DNS resolution, along with comprehensive monitoring and health endpoints.
+--
+
+== Introduction
+
+nameserver-switcher acts as a sophisticated DNS proxy that makes intelligent routing decisions based on configurable regex patterns. It's designed to work seamlessly with CoreDNS in Kubernetes environments but can also be deployed standalone.
+
+=== Key Features
+
+* **Pattern-based DNS Routing**: Match incoming DNS requests against configurable regex patterns
+* **CNAME-aware Routing**: Secondary pattern matching on CNAME responses for intelligent resolver selection
+* **Dual Interface**: Both DNS (UDP/TCP) and gRPC interfaces for maximum flexibility
+* **CoreDNS Integration**: Seamless integration via forward or gRPC plugins
+* **Prometheus Metrics**: Comprehensive metrics for monitoring and alerting
+* **Health Endpoints**: Kubernetes-compatible liveness and readiness probes
+* **Helm Chart**: Production-ready Kubernetes deployment
+
+=== Use Cases
+
+* **Split-horizon DNS**: Route internal and external queries to different resolvers
+* **CDN Optimization**: Route CDN queries to specific resolvers for better performance
+* **Service Mesh Integration**: Intelligent DNS routing based on service discovery patterns
+* **Multi-cloud DNS**: Route queries to cloud-specific DNS resolvers based on patterns
+* **Development Environments**: Route specific domains to local or staging resolvers
+
+== Quick Start
+
+=== Installation Methods
+
+==== Using Docker
+
+[source,bash]
+----
+docker run -p 5353:5353/udp -p 5353:5353/tcp -p 5354:5354 -p 8080:8080 \
+  -e REQUEST_PATTERNS=".*\.example\.com$" \
+  -e CNAME_PATTERNS=".*-match\.example\.com$" \
+  -e EXPLICIT_RESOLVER="8.8.8.8:53" \
+  ghcr.io/steigr/nameserver-switcher:latest
+----
+
+==== Using Helm
+
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  --set patterns.request[0]=".*\\.example\\.com$" \
+  --set patterns.cname[0]=".*-match\\.example\\.com$" \
+  --set resolvers.explicit="8.8.8.8:53"
+----
+
+==== From Source
+
+[source,bash]
+----
+git clone https://github.com/steigr/nameserver-switcher.git
+cd nameserver-switcher
+go build -o nameserver-switcher ./cmd/nameserver-switcher
+./nameserver-switcher --help
+----
+
+== Architecture
+
+See: link:architecture.adoc[Architecture Documentation]
+
+== Workflow and Modes
+
+See: link:workflow.adoc[Workflow Documentation]
+
+== Monitoring and Metrics
+
+See: link:monitoring.adoc[Monitoring Documentation]
+
+== Helm Deployment
+
+See: link:helm-deployment.adoc[Helm Deployment Guide]
+
+== Configuration Reference
+
+See: link:configuration.adoc[Configuration Reference]
+
+== API Reference
+
+=== DNS Server
+
+* **Protocol**: DNS over UDP and TCP
+* **Default Port**: 5353
+* **Standard DNS queries**: Fully RFC-compliant DNS resolver
+
+=== gRPC Server
+
+* **Protocol**: gRPC (HTTP/2)
+* **Default Port**: 5354
+* **API Definition**: `pkg/api/v1/switcher.proto`
+
+=== HTTP Server
+
+* **Protocol**: HTTP
+* **Default Port**: 8080
+* **Endpoints**:
+  - `/metrics` - Prometheus metrics
+  - `/livez` - Liveness probe
+  - `/readyz` - Readiness probe
+
+== Troubleshooting
+
+See: link:troubleshooting.adoc[Troubleshooting Guide]
+
+== Development
+
+See: link:development.adoc[Development Guide]
+
+== License
+
+nameserver-switcher is released under the MIT License.

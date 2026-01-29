@@ -1,0 +1,458 @@
+= Architecture Documentation
+:toc: left
+:toclevels: 3
+:numbered:
+:icons: font
+:source-highlighter: rouge
+
+== Overall Architecture
+
+nameserver-switcher is designed as a modular DNS proxy that integrates seamlessly with CoreDNS in Kubernetes environments. It implements intelligent routing logic based on regex pattern matching.
+
+=== System Components
+
+==== Core Components
+
+[plantuml, component-diagram, svg]
+....
+@startuml
+package "nameserver-switcher" {
+  [DNS Server] as DNS
+  [gRPC Server] as GRPC
+  [HTTP Server] as HTTP
+  [Router] as Router
+  [Matcher] as Matcher
+  [Resolver] as Resolver
+  [Metrics] as Metrics
+
+  DNS --> Router
+  GRPC --> Router
+  Router --> Matcher
+  Router --> Resolver
+  DNS --> Metrics
+  GRPC --> Metrics
+  HTTP --> Metrics
+}
+
+package "External" {
+  [CoreDNS] as CoreDNS
+  [System DNS] as SysDNS
+  [Explicit DNS] as ExpDNS
+  [Prometheus] as Prom
+}
+
+CoreDNS --> DNS : forward plugin
+CoreDNS --> GRPC : grpc plugin
+Router --> SysDNS : fallback queries
+Router --> ExpDNS : matched queries
+HTTP --> Prom : /metrics
+@enduml
+....
+
+===== 1. DNS Server
+
+* **Purpose**: Accepts DNS queries over UDP and TCP
+* **Port**: 5353 (default, configurable)
+* **Protocol**: RFC-compliant DNS
+* **Implementation**: `internal/dns/server.go`
+
+===== 2. gRPC Server
+
+* **Purpose**: Provides DNS resolution via gRPC interface
+* **Port**: 5354 (default, configurable)
+* **Protocol**: gRPC with protobuf
+* **Implementation**: `internal/grpc/server.go`
+* **API**: Defined in `pkg/api/v1/switcher.proto`
+
+===== 3. HTTP Server
+
+* **Purpose**: Serves metrics and health endpoints
+* **Port**: 8080 (default, configurable)
+* **Endpoints**:
+  - `/metrics` - Prometheus metrics
+  - `/livez` - Liveness probe
+  - `/readyz` - Readiness probe
+
+===== 4. Router
+
+* **Purpose**: Core routing logic for DNS resolution
+* **Implementation**: `internal/resolver/router.go`
+* **Responsibilities**:
+  - Pattern matching against request names
+  - CNAME extraction and pattern matching
+  - Resolver selection
+  - Result tracking
+
+===== 5. Matcher
+
+* **Purpose**: Regex pattern matching engine
+* **Implementation**: `internal/matcher/matcher.go`
+* **Features**:
+  - Compiled regex patterns
+  - Pattern tracking for metrics
+  - Case-insensitive matching
+
+===== 6. Resolver
+
+* **Purpose**: DNS resolution to upstream servers
+* **Implementation**: `internal/resolver/resolver.go`
+* **Types**:
+  - **System Resolver**: Uses system DNS (fallback)
+  - **Explicit Resolver**: Custom DNS server for matched patterns
+
+===== 7. Metrics
+
+* **Purpose**: Prometheus metrics collection
+* **Implementation**: `internal/metrics/metrics.go`
+* **Tracked Metrics**: See Monitoring documentation
+
+=== Architecture Layers
+
+[source]
+----
+┌─────────────────────────────────────────────────────────┐
+│                    Client Layer                          │
+│  (DNS Clients, CoreDNS, Applications)                   │
+└─────────────────────────────────────────────────────────┘
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│                  Protocol Layer                          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │  DNS Server  │  │ gRPC Server  │  │  HTTP Server │  │
+│  │  (UDP/TCP)   │  │   (HTTP/2)   │  │   (Metrics)  │  │
+│  └──────────────┘  └──────────────┘  └──────────────┘  │
+└─────────────────────────────────────────────────────────┘
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│                   Routing Layer                          │
+│  ┌──────────────────────────────────────────────────┐   │
+│  │              Router                              │   │
+│  │  • Pattern Matching                              │   │
+│  │  • CNAME Analysis                                │   │
+│  │  • Resolver Selection                            │   │
+│  └──────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────┘
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│                 Resolution Layer                         │
+│  ┌─────────────────┐         ┌─────────────────┐       │
+│  │ System Resolver │         │Explicit Resolver│       │
+│  │  (Fallback)     │         │   (Matched)     │       │
+│  └─────────────────┘         └─────────────────┘       │
+└─────────────────────────────────────────────────────────┘
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│               Upstream DNS Servers                       │
+│  (System DNS, 8.8.8.8, 1.1.1.1, Custom Servers)         │
+└─────────────────────────────────────────────────────────┘
+----
+
+== Integration with CoreDNS
+
+nameserver-switcher is designed to work as a backend for CoreDNS, providing intelligent routing capabilities to Kubernetes DNS infrastructure.
+
+=== Integration Modes
+
+==== Mode 1: DNS Forward Plugin
+
+CoreDNS forwards DNS queries to nameserver-switcher via the `forward` plugin.
+
+[source,corefile]
+----
+.:53 {
+    # Forward all queries to nameserver-switcher
+    forward . 127.0.0.1:5353
+
+    # Logging
+    log
+    errors
+
+    # Cache responses
+    cache 30
+}
+----
+
+**Flow:**
+[source]
+----
+DNS Client → CoreDNS:53 → forward plugin → nameserver-switcher:5353 → Upstream DNS
+                                                    ↓
+                                              Pattern Matching
+                                                    ↓
+                                        System DNS or Explicit DNS
+----
+
+**Advantages:**
+
+* Simple configuration
+* Standard DNS protocol
+* Works with all DNS clients
+* Easy to debug with standard DNS tools
+
+**Disadvantages:**
+
+* No runtime configuration updates
+* Extra network hop (DNS → DNS)
+
+==== Mode 2: gRPC Plugin
+
+CoreDNS uses the `grpc` plugin to communicate with nameserver-switcher via gRPC.
+
+[source,corefile]
+----
+.:53 {
+    # Use gRPC to query nameserver-switcher
+    grpc . 127.0.0.1:5354
+
+    # Logging
+    log
+    errors
+
+    # Cache responses
+    cache 30
+}
+----
+
+**Flow:**
+[source]
+----
+DNS Client → CoreDNS:53 → grpc plugin → nameserver-switcher:5354 (gRPC) → Upstream DNS
+                                                    ↓
+                                              Pattern Matching
+                                                    ↓
+                                        System DNS or Explicit DNS
+----
+
+**Advantages:**
+
+* More efficient (HTTP/2 multiplexing)
+* Potential for runtime configuration updates via gRPC
+* Better error handling
+* Streaming capabilities
+
+**Disadvantages:**
+
+* Slightly more complex setup
+* Requires gRPC plugin in CoreDNS
+
+=== Deployment Patterns
+
+==== Pattern A: Sidecar Deployment
+
+Deploy nameserver-switcher as a sidecar container alongside CoreDNS.
+
+[source,yaml]
+----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coredns-with-switcher
+spec:
+  template:
+    spec:
+      containers:
+      - name: coredns
+        image: coredns/coredns:latest
+        ports:
+        - containerPort: 53
+          protocol: UDP
+        - containerPort: 53
+          protocol: TCP
+        volumeMounts:
+        - name: config
+          mountPath: /etc/coredns
+
+      - name: nameserver-switcher
+        image: ghcr.io/steigr/nameserver-switcher:latest
+        ports:
+        - containerPort: 5353
+          protocol: UDP
+        - containerPort: 5353
+          protocol: TCP
+        - containerPort: 5354
+          protocol: TCP
+        env:
+        - name: REQUEST_PATTERNS
+          value: ".*\\.example\\.com$"
+        - name: EXPLICIT_RESOLVER
+          value: "8.8.8.8:53"
+----
+
+**Benefits:**
+
+* Co-located for low latency
+* Shared lifecycle management
+* Simple networking (localhost communication)
+
+==== Pattern B: Separate Service Deployment
+
+Deploy nameserver-switcher as an independent service.
+
+[source,yaml]
+----
+# nameserver-switcher deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nameserver-switcher
+spec:
+  template:
+    spec:
+      containers:
+      - name: nameserver-switcher
+        image: ghcr.io/steigr/nameserver-switcher:latest
+---
+# Service for nameserver-switcher
+apiVersion: v1
+kind: Service
+metadata:
+  name: nameserver-switcher
+spec:
+  selector:
+    app: nameserver-switcher
+  ports:
+  - name: dns-udp
+    port: 53
+    targetPort: 5353
+    protocol: UDP
+  - name: dns-tcp
+    port: 53
+    targetPort: 5353
+    protocol: TCP
+  - name: grpc
+    port: 5354
+    protocol: TCP
+----
+
+CoreDNS Corefile references the service:
+[source,corefile]
+----
+.:53 {
+    forward . nameserver-switcher.default.svc.cluster.local:53
+    log
+    errors
+    cache 30
+}
+----
+
+**Benefits:**
+
+* Independent scaling
+* Can be shared across multiple CoreDNS instances
+* Easier to update independently
+
+=== Data Flow
+
+==== Complete Request Flow
+
+[source]
+----
+1. Client Query
+   └─> DNS Query: foo.example.com (A)
+
+2. CoreDNS Receives Query
+   └─> Check cache
+   └─> Forward to nameserver-switcher
+
+3. nameserver-switcher (Protocol Layer)
+   └─> DNS Server OR gRPC Server receives query
+   └─> Pass to Router
+
+4. Router (Routing Layer)
+   └─> Extract query name: "foo.example.com"
+   └─> Check REQUEST_PATTERNS
+       ├─ Match: ".*\.example\.com$" ✓
+       └─> Query Explicit Resolver (non-recursive)
+
+5. Explicit Resolver Response
+   └─> Returns: foo.example.com CNAME bar-match.example.com
+
+6. Router CNAME Check
+   └─> Extract CNAME: "bar-match.example.com"
+   └─> Check CNAME_PATTERNS
+       ├─ Match: ".*-match\.example\.com$" ✓
+       └─> Return Explicit Resolver response (recursive)
+
+7. Response to CoreDNS
+   └─> Returns full DNS response with A records
+
+8. CoreDNS to Client
+   └─> Cache response
+   └─> Return to client
+----
+
+==== Fallback Flow
+
+[source]
+----
+1. Client Query
+   └─> DNS Query: hello.example.com (A)
+
+2-3. [Same as above]
+
+4. Router (Routing Layer)
+   └─> Extract query name: "hello.example.com"
+   └─> Check REQUEST_PATTERNS
+       ├─ Match: ".*\.example\.com$" ✓
+       └─> Query Explicit Resolver (non-recursive)
+
+5. Explicit Resolver Response
+   └─> Returns: hello.example.com CNAME bar-nomatch.example.com
+
+6. Router CNAME Check
+   └─> Extract CNAME: "bar-nomatch.example.com"
+   └─> Check CNAME_PATTERNS
+       ├─ NO Match: ".*-match\.example\.com$" ✗
+       └─> Use System Resolver instead
+
+7. System Resolver
+   └─> Recursive query to system DNS
+   └─> Returns: bar-nomatch.example.com A 127.0.0.3
+
+8-9. [Return to client]
+----
+
+== Performance Considerations
+
+=== Caching Strategy
+
+* **CoreDNS Cache**: Recommended to cache responses at CoreDNS level (30-300s)
+* **nameserver-switcher**: Does not cache (stateless design)
+* **Pattern Matching**: Pre-compiled regex patterns for fast matching
+
+=== Scalability
+
+* **Stateless**: All instances are identical, easy to scale horizontally
+* **Connection Pooling**: Reuses DNS connections to upstream resolvers
+* **Concurrent Requests**: Go routines handle concurrent requests efficiently
+
+=== Resource Usage
+
+Typical resource requirements:
+
+* **CPU**: 100-500m per instance
+* **Memory**: 64-128Mi per instance
+* **Network**: Minimal overhead (<10% of DNS traffic)
+
+== Security Considerations
+
+=== Network Security
+
+* **Non-root User**: Runs as user 1000 (non-root)
+* **Read-only Filesystem**: Container uses read-only root filesystem
+* **Dropped Capabilities**: Only NET_BIND_SERVICE capability retained
+* **No Privilege Escalation**: Explicitly disabled
+
+=== DNS Security
+
+* **Query Validation**: Validates all incoming DNS queries
+* **Response Validation**: Validates responses from upstream resolvers
+* **Pattern Safety**: Regex patterns are compiled and validated at startup
+* **No Query Logging by Default**: Sensitive DNS queries not logged (configurable)
+
+=== Kubernetes Security
+
+* **Pod Security Standards**: Compatible with restricted PSS
+* **Service Account**: Uses minimal RBAC permissions
+* **Network Policies**: Can be restricted to specific namespaces
+* **Secret Management**: Supports configuration via secrets

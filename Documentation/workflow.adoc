@@ -1,0 +1,524 @@
+= Workflow and Operation Modes
+:toc: left
+:toclevels: 3
+:numbered:
+:icons: font
+:source-highlighter: rouge
+
+== Router Decision Logic
+
+The nameserver-switcher router implements an intelligent decision tree to determine which DNS resolver to use for each query.
+
+=== Decision Flow
+
+[source]
+----
+                    ┌──────────────────────┐
+                    │   DNS Query Arrives  │
+                    └──────────┬───────────┘
+                               ▼
+                    ┌──────────────────────┐
+                    │ Extract Query Name   │
+                    │ (strip trailing .)   │
+                    └──────────┬───────────┘
+                               ▼
+                    ┌──────────────────────┐
+                    │ Match against        │
+                    │ REQUEST_PATTERNS?    │
+                    └──────────┬───────────┘
+                               ▼
+                ┌──────────────┴──────────────┐
+                │                             │
+              NO│                             │YES
+                ▼                             ▼
+    ┌────────────────────┐      ┌────────────────────────┐
+    │ Use System         │      │ Query Explicit         │
+    │ Resolver           │      │ Resolver               │
+    │ (Recursive)        │      │ (Non-recursive)        │
+    └────────────────────┘      └─────────┬──────────────┘
+                                          ▼
+                              ┌────────────────────────┐
+                              │ Response has CNAME?    │
+                              └─────────┬──────────────┘
+                                        ▼
+                            ┌───────────┴───────────┐
+                            │                       │
+                          NO│                       │YES
+                            ▼                       ▼
+                ┌────────────────────┐   ┌────────────────────┐
+                │ Use System         │   │ Extract CNAME      │
+                │ Resolver           │   │ Target             │
+                │ (Fallback)         │   └─────────┬──────────┘
+                └────────────────────┘             ▼
+                                        ┌────────────────────┐
+                                        │ Match CNAME against│
+                                        │ CNAME_PATTERNS?    │
+                                        └─────────┬──────────┘
+                                                  ▼
+                                      ┌───────────┴───────────┐
+                                      │                       │
+                                    NO│                       │YES
+                                      ▼                       ▼
+                          ┌────────────────────┐   ┌────────────────────┐
+                          │ Use System         │   │ Return Response    │
+                          │ Resolver           │   │ from Explicit      │
+                          │ (Fallback)         │   │ Resolver           │
+                          └────────────────────┘   │ (Recursive)        │
+                                                   └────────────────────┘
+----
+
+=== Routing Modes
+
+nameserver-switcher operates in different modes depending on the pattern matching results.
+
+==== Mode Comparison Table
+
+[cols="2,3,3,3,3", options="header"]
+|===
+|Mode
+|Request Pattern Match
+|CNAME in Response
+|CNAME Pattern Match
+|Resolver Used
+
+|**System Fallback**
+|❌ No Match
+|N/A
+|N/A
+|System Resolver (Recursive)
+
+|**System Fallback (No CNAME)**
+|✅ Match
+|❌ No CNAME
+|N/A
+|System Resolver (Fallback)
+
+|**Explicit Recursive**
+|✅ Match
+|✅ CNAME Present
+|✅ CNAME Matches
+|Explicit Resolver (Recursive resolution)
+
+|**System Override (CNAME No Match)**
+|✅ Match
+|✅ CNAME Present
+|❌ CNAME No Match
+|System Resolver (Fallback)
+
+|===
+
+=== Detailed Mode Descriptions
+
+==== Mode 1: System Fallback
+
+**Trigger:** Request does not match any REQUEST_PATTERNS
+
+**Behavior:**
+
+* Immediately routes query to system resolver
+* Full recursive resolution performed by system resolver
+* No pattern matching overhead
+* Standard DNS resolution
+
+**Example:**
+
+[source]
+----
+Query: unmatched-domain.com
+Request Pattern: ".*\.example\.com$"
+
+Result:
+  ✗ No REQUEST_PATTERN match
+  → Use System Resolver
+  → Returns: unmatched-domain.com A 1.2.3.4
+----
+
+**Use Case:** Default behavior for queries outside configured patterns (e.g., general internet domains)
+
+==== Mode 2: System Fallback (No CNAME)
+
+**Trigger:** Request matches REQUEST_PATTERNS but response from explicit resolver contains no CNAME
+
+**Behavior:**
+
+* Queries explicit resolver (first)
+* Response contains direct A/AAAA records (no CNAME)
+* **Falls back to system resolver** for the actual response
+* CNAME pattern checking not applicable (no CNAME present)
+
+**Example:**
+
+[source]
+----
+Query: direct.example.com
+Request Pattern: ".*\.example\.com$"
+Explicit Resolver Response: direct.example.com A 10.0.0.1 (has no CNAME)
+
+Result:
+  ✓ REQUEST_PATTERN matches
+  → Query Explicit Resolver (first check)
+  ✗ No CNAME in response
+  → Fallback to System Resolver
+  → Returns: response from system resolver
+----
+
+**Use Case:** Queries that match request patterns but don't have CNAMEs - system resolver handles resolution
+
+==== Mode 3: Explicit Recursive
+
+**Trigger:** Request matches REQUEST_PATTERNS, response has CNAME, and CNAME matches CNAME_PATTERNS
+
+**Behavior:**
+
+* Queries explicit resolver (non-recursive first)
+* Response contains CNAME record
+* CNAME target matches CNAME pattern
+* Returns explicit resolver's full recursive response
+* This is the "happy path" for CNAME-based routing
+
+**Example:**
+
+[source]
+----
+Query: app.example.com
+Request Pattern: ".*\.example\.com$"
+CNAME Pattern: ".*-prod\.cdn\.example\.com$"
+Explicit Resolver Response:
+  app.example.com CNAME app-prod.cdn.example.com
+  app-prod.cdn.example.com A 10.20.30.40
+
+Result:
+  ✓ REQUEST_PATTERN matches: ".*\.example\.com$"
+  → Query Explicit Resolver
+  ✓ CNAME present: "app-prod.cdn.example.com"
+  ✓ CNAME_PATTERN matches: ".*-prod\.cdn\.example\.com$"
+  → Return explicit resolver response (recursive)
+  → Returns:
+      app.example.com CNAME app-prod.cdn.example.com
+      app-prod.cdn.example.com A 10.20.30.40
+----
+
+**Use Case:** CDN-backed services, load-balanced endpoints, or services with CNAME records pointing to specific infrastructure
+
+==== Mode 4: System Override
+
+**Trigger:** Request matches REQUEST_PATTERNS, response has CNAME, but CNAME does NOT match CNAME_PATTERNS
+
+**Behavior:**
+
+* Queries explicit resolver initially
+* Response contains CNAME record
+* CNAME target does NOT match CNAME pattern
+* Falls back to system resolver for recursive resolution
+* System resolver handles the full query
+
+**Example:**
+
+[source]
+----
+Query: external.example.com
+Request Pattern: ".*\.example\.com$"
+CNAME Pattern: ".*-prod\.cdn\.example\.com$"
+Explicit Resolver Response:
+  external.example.com CNAME service.external-provider.com
+
+Result:
+  ✓ REQUEST_PATTERN matches: ".*\.example\.com$"
+  → Query Explicit Resolver
+  ✓ CNAME present: "service.external-provider.com"
+  ✗ CNAME_PATTERN no match (not .*-prod\.cdn\.example\.com$)
+  → Fallback to System Resolver
+  → System resolver recursively resolves service.external-provider.com
+  → Returns:
+      external.example.com CNAME service.external-provider.com
+      service.external-provider.com A 203.0.113.50
+----
+
+**Use Case:** Services in matched domains that point to external infrastructure (e.g., third-party CDNs, external services)
+
+== Operation Modes (Protocol)
+
+nameserver-switcher can operate in different protocol modes for integration with CoreDNS.
+
+=== DNS Mode
+
+**Protocol:** DNS over UDP/TCP (RFC 1035)
+
+**Port:** 5353 (default)
+
+**Integration:** CoreDNS `forward` plugin
+
+**Configuration:**
+
+.CoreDNS Corefile
+[source,corefile]
+----
+.:53 {
+    forward . nameserver-switcher:5353
+    log
+    errors
+    cache 30
+}
+----
+
+**Characteristics:**
+
+* Standard DNS protocol
+* Works with any DNS client
+* Simple to configure and debug
+* UDP for most queries, TCP for large responses
+* No additional dependencies
+
+**Best For:**
+
+* Simple deployments
+* Compatibility with all DNS tools
+* When gRPC overhead is unnecessary
+
+=== gRPC Mode
+
+**Protocol:** gRPC over HTTP/2
+
+**Port:** 5354 (default)
+
+**Integration:** CoreDNS `grpc` plugin
+
+**Configuration:**
+
+.CoreDNS Corefile
+[source,corefile]
+----
+.:53 {
+    grpc . nameserver-switcher:5354
+    log
+    errors
+    cache 30
+}
+----
+
+**Characteristics:**
+
+* HTTP/2 multiplexing
+* Binary protocol (protobuf)
+* Better error handling
+* Streaming capabilities
+* More efficient for high-volume scenarios
+
+**Best For:**
+
+* High-traffic environments
+* Modern infrastructure
+* When advanced features are needed
+* Microservices architectures
+
+=== Comparison Table
+
+[cols="2,3,3", options="header"]
+|===
+|Feature
+|DNS Mode
+|gRPC Mode
+
+|**Protocol**
+|DNS (UDP/TCP)
+|gRPC (HTTP/2)
+
+|**Port**
+|5353
+|5354
+
+|**CoreDNS Plugin**
+|`forward`
+|`grpc`
+
+|**Setup Complexity**
+|Simple
+|Moderate
+
+|**Performance**
+|Good
+|Excellent (HTTP/2 multiplexing)
+
+|**Debugging**
+|Easy (`dig`, `nslookup`)
+|Moderate (requires gRPC tools)
+
+|**Connection Overhead**
+|Low (UDP), Medium (TCP)
+|Low (connection reuse)
+
+|**Binary Protocol**
+|DNS Wire Format
+|Protocol Buffers
+
+|**Streaming**
+|No
+|Yes (potential)
+
+|**Error Details**
+|Limited (DNS RCODE)
+|Rich (gRPC status codes)
+
+|**Configuration Updates**
+|Restart required
+|Potential for dynamic updates
+
+|===
+
+== Configuration Scenarios
+
+=== Scenario 1: Split-Horizon DNS
+
+**Objective:** Route internal domains to internal DNS, external to public DNS
+
+**Configuration:**
+
+[source,bash]
+----
+# Match internal domain patterns
+REQUEST_PATTERNS=".*\.internal\.company\.com$
+.*\.svc\.cluster\.local$"
+
+# Match internal CDN CNAMEs
+CNAME_PATTERNS=".*\.internal-cdn\.company\.com$"
+
+# Use internal DNS for matched patterns
+EXPLICIT_RESOLVER="10.0.0.10:53"
+
+# Use public DNS (8.8.8.8) as system resolver
+----
+
+**Workflow:**
+
+* `app.internal.company.com` → Explicit Resolver → Internal DNS
+* `service.svc.cluster.local` → Explicit Resolver → Kubernetes DNS
+* `google.com` → System Resolver → 8.8.8.8
+
+=== Scenario 2: CDN Optimization
+
+**Objective:** Route CDN-backed services to specific resolver for better geo-routing
+
+**Configuration:**
+
+[source,bash]
+----
+# Match application domains
+REQUEST_PATTERNS=".*\.myapp\.com$"
+
+# Match CDN CNAMEs
+CNAME_PATTERNS=".*\.cdn\.provider\.net$
+.*\.cloudfront\.net$"
+
+# Use CDN-optimized DNS resolver
+EXPLICIT_RESOLVER="cdns.myapp.com:53"
+----
+
+**Workflow:**
+
+* Query: `www.myapp.com`
+* Explicit resolver returns: `www.myapp.com CNAME xyz.cdn.provider.net`
+* CNAME matches pattern → Use explicit resolver
+* Better CDN routing based on resolver location
+
+=== Scenario 3: Multi-Cloud DNS
+
+**Objective:** Route queries to cloud-specific DNS based on patterns
+
+**Configuration:**
+
+[source,bash]
+----
+# Match AWS-hosted services
+REQUEST_PATTERNS=".*\.aws\.company\.com$"
+
+# Match AWS load balancer CNAMEs
+CNAME_PATTERNS=".*\.elb\.amazonaws\.com$
+.*\.cloudfront\.net$"
+
+# Use AWS Route53 resolver
+EXPLICIT_RESOLVER="169.254.169.253:53"
+----
+
+**Workflow:**
+
+* `api.aws.company.com` → AWS Route53 → Optimal AWS routing
+* `web.company.com` → System Resolver → Regular DNS
+
+== Metrics and Observability
+
+The router tracks detailed metrics for each mode:
+
+* **Request Pattern Matches**: Counter per pattern
+* **CNAME Pattern Matches**: Counter per CNAME pattern
+* **Resolver Usage**: Counter per resolver (explicit/system)
+* **Query Duration**: Histogram by resolver
+* **Routing Decisions**: Track which path was taken
+
+See link:monitoring.adoc[Monitoring Documentation] for complete metrics details.
+
+== Best Practices
+
+=== Pattern Design
+
+1. **Be Specific**: Use anchors (`^`, `$`) to avoid over-matching
+2. **Test Patterns**: Validate regex patterns before deployment
+3. **Order Matters**: More specific patterns should be checked first
+4. **Escape Special Characters**: Properly escape dots and other regex metacharacters
+
+.Good Pattern Examples
+[source]
+----
+# Match example.com and all subdomains
+^.*\.example\.com$
+
+# Match only staging subdomains
+^.*\.staging\.example\.com$
+
+# Match specific service patterns
+^svc-[a-z0-9]+\.prod\.company\.com$
+----
+
+.Bad Pattern Examples
+[source]
+----
+# Too broad (matches example.com.malicious.com)
+example.com
+
+# Unescaped dots match any character
+.*example.com.*
+
+# No anchors, could match middle of domain
+myservice
+----
+
+=== Performance Optimization
+
+1. **Use CoreDNS Cache**: Cache responses at CoreDNS level (30-300s TTL)
+2. **Limit Patterns**: Too many patterns increase matching overhead
+3. **Pre-compile Patterns**: Patterns are compiled at startup (done automatically)
+4. **Monitor Metrics**: Watch for slow queries and adjust patterns
+
+=== Debugging
+
+Enable debug logging to see routing decisions:
+
+[source,bash]
+----
+# Enable debug mode
+DEBUG=true
+
+# Watch for pattern matches
+LOG_REQUESTS=true
+LOG_RESPONSES=true
+----
+
+Example debug output:
+[source]
+----
+[REQUEST] protocol=udp type=A name=app.example.com. from=10.0.1.5:12345
+[DEBUG] REQUEST_PATTERN matched: pattern=".*\.example\.com$" request="app.example.com"
+[DEBUG] Queried nameserver: explicit
+[DEBUG] CNAME_PATTERN matched: pattern=".*\.cdn\.example\.com$" cname="app.cdn.example.com"
+[RESPONSE] name=app.example.com. rcode=NOERROR answers=2 resolver=explicit duration=45.2ms
+[DEBUG] Full response: ;; opcode: QUERY, status: NOERROR...
+----

@@ -239,10 +239,10 @@ func TestRouter_Route_RequestMatch_NoCNAME(t *testing.T) {
 	}
 
 	router := NewRouter(RouterConfig{
-		RequestMatcher:  &MockMatcher{matches: map[string]string{"www.example.com": `.*\.example\.com$`}},
-		CNAMEMatcher:    &MockMatcher{matches: map[string]string{}},
-		RequestResolver: &MockResolver{name: "request", response: requestResp},
-		SystemResolver:  &MockResolver{name: "system", response: systemResp},
+		RequestMatcher:   &MockMatcher{matches: map[string]string{"www.example.com": `.*\.example\.com$`}},
+		CNAMEMatcher:     &MockMatcher{matches: map[string]string{}},
+		ExplicitResolver: &MockResolver{name: "explicit", response: requestResp},
+		SystemResolver:   &MockResolver{name: "system", response: systemResp},
 	})
 
 	req := &dns.Msg{}
@@ -256,7 +256,7 @@ func TestRouter_Route_RequestMatch_NoCNAME(t *testing.T) {
 }
 
 func TestRouter_Route_RequestMatch_CNAMEMatch(t *testing.T) {
-	requestResp := &dns.Msg{
+	explicitRespWithCNAME := &dns.Msg{
 		Answer: []dns.RR{
 			&dns.CNAME{
 				Hdr:    dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeCNAME},
@@ -265,20 +265,11 @@ func TestRouter_Route_RequestMatch_CNAMEMatch(t *testing.T) {
 		},
 	}
 
-	explicitResp := &dns.Msg{
-		Answer: []dns.RR{
-			&dns.A{
-				Hdr: dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeA},
-				A:   []byte{10, 20, 30, 40},
-			},
-		},
-	}
-
 	router := NewRouter(RouterConfig{
 		RequestMatcher:   &MockMatcher{matches: map[string]string{"www.example.com": `.*\.example\.com$`}},
 		CNAMEMatcher:     &MockMatcher{matches: map[string]string{"cdn.provider.net": `.*\.provider\.net$`}},
-		RequestResolver:  &MockResolver{name: "request", response: requestResp},
-		ExplicitResolver: &MockResolver{name: "explicit", response: explicitResp},
+		ExplicitResolver: &MockResolver{name: "explicit", response: explicitRespWithCNAME},
+		SystemResolver:   &MockResolver{name: "system", response: &dns.Msg{}},
 	})
 
 	req := &dns.Msg{}
@@ -336,9 +327,9 @@ func TestRouter_Route_NoResolver(t *testing.T) {
 
 func TestRouter_Route_RequestResolverError(t *testing.T) {
 	router := NewRouter(RouterConfig{
-		RequestMatcher:  &MockMatcher{matches: map[string]string{"example.com": "pattern"}},
-		RequestResolver: &MockResolver{name: "request", err: assert.AnError},
-		SystemResolver:  &MockResolver{name: "system", response: &dns.Msg{}},
+		RequestMatcher:   &MockMatcher{matches: map[string]string{"example.com": "pattern"}},
+		ExplicitResolver: &MockResolver{name: "explicit", err: assert.AnError},
+		SystemResolver:   &MockResolver{name: "system", response: &dns.Msg{}},
 	})
 
 	req := &dns.Msg{}
@@ -346,7 +337,7 @@ func TestRouter_Route_RequestResolverError(t *testing.T) {
 
 	_, err := router.Route(context.Background(), req)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "request resolver failed")
+	assert.Contains(t, err.Error(), "explicit resolver failed")
 }
 
 func TestRouter_Route_ExplicitResolverError(t *testing.T) {
@@ -446,45 +437,6 @@ func TestRouter_Route_NilRequestMatcher(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "system", result.ResolverUsed)
 	assert.False(t, result.RequestMatched)
-}
-
-func TestRouter_Route_CNAMEMatch_NoExplicitResolver(t *testing.T) {
-	// Test case: CNAME matches but no explicit resolver is configured
-	requestResp := &dns.Msg{
-		Answer: []dns.RR{
-			&dns.CNAME{
-				Hdr:    dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeCNAME},
-				Target: "cdn.provider.net.",
-			},
-		},
-	}
-
-	systemResp := &dns.Msg{
-		Answer: []dns.RR{
-			&dns.A{
-				Hdr: dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeA},
-				A:   []byte{1, 2, 3, 4},
-			},
-		},
-	}
-
-	router := NewRouter(RouterConfig{
-		RequestMatcher:   &MockMatcher{matches: map[string]string{"www.example.com": "pattern"}},
-		CNAMEMatcher:     &MockMatcher{matches: map[string]string{"cdn.provider.net": "cname-pattern"}},
-		RequestResolver:  &MockResolver{name: "request", response: requestResp},
-		ExplicitResolver: nil, // No explicit resolver
-		SystemResolver:   &MockResolver{name: "system", response: systemResp},
-	})
-
-	req := &dns.Msg{}
-	req.SetQuestion("www.example.com.", dns.TypeA)
-
-	result, err := router.Route(context.Background(), req)
-	require.NoError(t, err)
-	// Since there's no explicit resolver, it should fall back to system
-	assert.Equal(t, "system", result.ResolverUsed)
-	assert.True(t, result.RequestMatched)
-	assert.True(t, result.CNAMEMatched)
 }
 
 func TestRouter_Route_RequestMatch_NoRequestResolver(t *testing.T) {

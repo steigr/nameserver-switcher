@@ -104,19 +104,15 @@ func TestServer_Query(t *testing.T) {
 }
 
 func TestServer_Query_WithPatternMatch(t *testing.T) {
-	requestResp := &dns.Msg{
-		Answer: []dns.RR{
-			&dns.CNAME{
-				Hdr:    dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeCNAME},
-				Target: "cdn.provider.net.",
-			},
-		},
-	}
-
+	// Response with CNAME that matches the CNAME pattern
 	explicitResp := &dns.Msg{
 		Answer: []dns.RR{
+			&dns.CNAME{
+				Hdr:    dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 300},
+				Target: "cdn.provider.net.",
+			},
 			&dns.A{
-				Hdr: dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				Hdr: dns.RR_Header{Name: "cdn.provider.net.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
 				A:   []byte{10, 20, 30, 40},
 			},
 		},
@@ -125,8 +121,8 @@ func TestServer_Query_WithPatternMatch(t *testing.T) {
 	router := resolver.NewRouter(resolver.RouterConfig{
 		RequestMatcher:   &mockMatcher{matches: map[string]string{"www.example.com": `.*\.example\.com$`}},
 		CNAMEMatcher:     &mockMatcher{matches: map[string]string{"cdn.provider.net": `.*\.provider\.net$`}},
-		RequestResolver:  &mockResolver{name: "request", response: requestResp},
 		ExplicitResolver: &mockResolver{name: "explicit", response: explicitResp},
+		SystemResolver:   &mockResolver{name: "system", response: &dns.Msg{}},
 	})
 
 	server := NewServer(ServerConfig{
@@ -302,19 +298,15 @@ func TestServer_HandleRequest_RoutingError(t *testing.T) {
 }
 
 func TestServer_HandleRequest_WithPatternMatch(t *testing.T) {
-	requestResp := &dns.Msg{
-		Answer: []dns.RR{
-			&dns.CNAME{
-				Hdr:    dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeCNAME},
-				Target: "cdn.provider.net.",
-			},
-		},
-	}
-
+	// Response with CNAME that matches the CNAME pattern
 	explicitResp := &dns.Msg{
 		Answer: []dns.RR{
+			&dns.CNAME{
+				Hdr:    dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 300},
+				Target: "cdn.provider.net.",
+			},
 			&dns.A{
-				Hdr: dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				Hdr: dns.RR_Header{Name: "cdn.provider.net.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
 				A:   net.ParseIP("10.20.30.40").To4(),
 			},
 		},
@@ -325,8 +317,8 @@ func TestServer_HandleRequest_WithPatternMatch(t *testing.T) {
 	router := resolver.NewRouter(resolver.RouterConfig{
 		RequestMatcher:   &mockMatcher{matches: map[string]string{"www.example.com": `.*\.example\.com$`}},
 		CNAMEMatcher:     &mockMatcher{matches: map[string]string{"cdn.provider.net": `.*\.provider\.net$`}},
-		RequestResolver:  &mockResolver{name: "request", response: requestResp},
 		ExplicitResolver: &mockResolver{name: "explicit", response: explicitResp},
+		SystemResolver:   &mockResolver{name: "system", response: &dns.Msg{}},
 	})
 
 	server := NewServer(ServerConfig{

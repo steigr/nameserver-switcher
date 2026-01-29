@@ -4,3 +4,4 @@
 /nameserver-switcher
 /*.sh
 /coverage.out
+.DS_Store
