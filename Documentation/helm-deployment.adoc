@@ -53,20 +53,137 @@ helm upgrade nameserver-switcher ./charts/nameserver-switcher \
 helm uninstall nameserver-switcher
 ----
 
+== Deployment Types
+
+The chart supports two deployment types: **Deployment** (default) and **DaemonSet**.
+
+=== Deployment (Traditional)
+
+Traditional Kubernetes Deployment with configurable replicas.
+
+**Best for:**
+- Static number of instances
+- Simple deployments
+- Testing and development
+
+**Install:**
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  --set deploymentType="Deployment" \
+  --set replicaCount=2
+----
+
+=== DaemonSet (Co-scheduled with CoreDNS)
+
+DaemonSet that runs one pod per node, automatically scaling with cluster size.
+
+**Best for:**
+- Production clusters with multiple nodes
+- Co-locating with CoreDNS for minimal latency
+- Automatic scaling with cluster growth
+
+**Install:**
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  --set deploymentType="DaemonSet" \
+  --set coreDNS.coSchedule=true
+----
+
+**Prerequisites:**
+- CoreDNS must have a label selector (default: `k8s-app: kube-dns` for standard kube-dns)
+- For Helm-deployed CoreDNS, update the selector:
+
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  --set deploymentType="DaemonSet" \
+  --set coreDNS.podSelector."app\.kubernetes\.io/name"="coredns"
+----
+
+== Service Configuration
+
+The chart supports combining all services (DNS, gRPC, HTTP) into a single service.
+
+=== Combined Service (Recommended)
+
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  --set service.combined=true
+----
+
+Creates a single service with all ports:
+- 53/UDP (DNS)
+- 53/TCP (DNS)
+- 5354/TCP (gRPC)
+- 8080/TCP (HTTP/metrics)
+
+**Use with CoreDNS:**
+[source,corefile]
+----
+.:53 {
+    forward . nameserver-switcher.default.svc.cluster.local:53
+}
+----
+
+=== Local Service (For DaemonSet)
+
+Enable a second service with `internalTrafficPolicy: Local` for traffic that should stay on the same node.
+
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  --set deploymentType="DaemonSet" \
+  --set localService.enabled=true
+----
+
+Creates two services:
+- `nameserver-switcher` - routes to any node
+- `nameserver-switcher-local` - routes only to local node
+
+**Use with CoreDNS:**
+[source,corefile]
+----
+.:53 {
+    # Use local service for traffic on the same node
+    forward . nameserver-switcher-local.default.svc.cluster.local:53
+}
+----
+
+**Benefits:**
+- Guaranteed local routing (no cross-node traffic)
+- Better performance (lower latency)
+- Fallback fails safely (no random routing on pod failure)
+
 == Configuration Values
 
 === Complete values.yaml Reference
 
 [source,yaml]
 ----
-# Number of replicas for high availability
+# Deployment type: "Deployment" (default) or "DaemonSet" (scales with CoreDNS)
+deploymentType: "Deployment"
+
+# Number of replicas (only used with Deployment)
 replicaCount: 1
+
+# CoreDNS pod label selector for co-scheduling (DaemonSet mode)
+coreDNS:
+  # Enable co-scheduling with CoreDNS
+  coSchedule: false
+  # Label selector to match CoreDNS pods
+  podSelector:
+    k8s-app: "kube-dns"
+  # Namespace where CoreDNS is deployed
+  namespace: "kube-system"
 
 # Container image configuration
 image:
   repository: ghcr.io/steigr/nameserver-switcher
   pullPolicy: IfNotPresent
-  tag: ""  # Defaults to chart appVersion
+  tag: ""
 
 # Image pull secrets for private registries
 imagePullSecrets: []
@@ -74,6 +191,236 @@ imagePullSecrets: []
 # Override release name
 nameOverride: ""
 fullnameOverride: ""
+
+# Service configuration - combine all ports into single service
+service:
+  # Combine all services (DNS, gRPC, HTTP) into a single service
+  combined: true
+  # Service type for main service
+  type: ClusterIP
+  # Annotations for the main service
+  annotations: {}
+
+# DNS server configuration
+dns:
+  # Port for DNS server (UDP and TCP)
+  port: 53
+
+# gRPC server configuration
+grpc:
+  # Port for gRPC server
+  port: 5354
+
+# HTTP server configuration (health/metrics)
+http:
+  # Port for HTTP server
+  port: 8080
+
+# Local service (for local traffic only)
+localService:
+  # Enable a second service with local routing policy
+  enabled: false
+  # This service will have spec.internalTrafficPolicy: Local
+  # Only routes to endpoints on the same node
+  annotations: {}
+
+# Pattern matching configuration
+patterns:
+  # Request patterns - regex patterns to match incoming DNS requests
+  request: []
+  # CNAME patterns - regex patterns to match CNAME responses
+  cname: []
+
+# DNS resolver configuration
+resolvers:
+  request: ""
+  explicit: ""
+
+# Service account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# Pod annotations
+podAnnotations: {}
+
+# Pod security context
+podSecurityContext:
+  fsGroup: 1000
+
+# Container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+# Resource limits and requests
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 64Mi
+
+# Prometheus metrics
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+# Health probes
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+dnsPolicy: "Default"
+----
+
+== Deployment Scenarios
+
+=== Scenario 1: DaemonSet with Local Service (Recommended)
+
+Deploy one pod per node with local traffic routing.
+
+.values-daemonset-local.yaml
+[source,yaml]
+----
+deploymentType: "DaemonSet"
+
+coreDNS:
+  coSchedule: true
+  podSelector:
+    k8s-app: "kube-dns"
+  namespace: "kube-system"
+
+service:
+  combined: true
+  type: ClusterIP
+
+localService:
+  enabled: true
+----
+
+Deploy:
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  -f values-daemonset-local.yaml \
+  --set patterns.request[0]=".*\.example\.com$" \
+  --set resolvers.explicit="8.8.8.8:53"
+----
+
+**Services created:**
+- `nameserver-switcher` - ClusterIP (any node)
+- `nameserver-switcher-local` - ClusterIP with Local traffic policy
+
+**CoreDNS Corefile:**
+[source,corefile]
+----
+.:53 {
+    forward . nameserver-switcher-local.default.svc.cluster.local:53
+    cache 30
+    log
+    errors
+}
+----
+
+**Benefits:**
+- One pod per node (automatic scaling)
+- Local traffic stays on same node
+- Minimal latency
+- Production-ready
+
+=== Scenario 2: DaemonSet with Helm-deployed CoreDNS
+
+For CoreDNS deployed via Helm chart.
+
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  --set deploymentType="DaemonSet" \
+  --set coreDNS.podSelector."app\.kubernetes\.io/name"="coredns" \
+  --set localService.enabled=true
+----
+
+=== Scenario 3: Traditional Deployment with Combined Service
+
+Multiple replicas with load balancing.
+
+.values-deployment.yaml
+[source,yaml]
+----
+deploymentType: "Deployment"
+replicaCount: 2
+
+service:
+  combined: true
+  type: ClusterIP
+
+localService:
+  enabled: false
+----
+
+Deploy:
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  -f values-deployment.yaml
+----
+
+**Use when:**
+- Fixed number of instances needed
+- Prefer traditional Deployment pattern
+- Testing or development environments
+
+=== Scenario 4: Multi-Region with NodePort
+
+Expose nameserver-switcher via NodePort for external access.
+
+[source,bash]
+----
+helm install nameserver-switcher ./charts/nameserver-switcher \
+  --set service.combined=true \
+  --set service.type="NodePort"
+----
+
+**Access:**
+[source,bash]
+----
+# Get the NodePort
+kubectl get svc nameserver-switcher -o jsonpath='{.spec.ports[0].nodePort}'
+
+# Query via any node IP
+dig @<node-ip>:<nodeport> example.com
+----
 
 # DNS server configuration
 dns:

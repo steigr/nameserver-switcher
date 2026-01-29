@@ -1,6 +1,22 @@
 # Default values for nameserver-switcher.
 
+# Deployment type: "Deployment" (default) or "DaemonSet" (scales with CoreDNS)
+deploymentType: "Deployment"
+
+# Number of replicas (only used with Deployment)
 replicaCount: 1
+
+# CoreDNS pod label selector for co-scheduling (DaemonSet mode)
+coreDNS:
+  # Enable co-scheduling with CoreDNS
+  coSchedule: false
+  # Label selector to match CoreDNS pods
+  # Example: {"k8s-app": "kube-dns"} for standard kube-dns
+  # Or {"app.kubernetes.io/name": "coredns"} for Helm-deployed CoreDNS
+  podSelector:
+    k8s-app: "kube-dns"
+  # Namespace where CoreDNS is deployed
+  namespace: "kube-system"
 
 image:
   repository: ghcr.io/steigr/nameserver-switcher
@@ -12,24 +28,43 @@ imagePullSecrets: []
 nameOverride: ""
 fullnameOverride: ""
 
+# Service configuration - combine all ports into single service
+service:
+  # Combine all services (DNS, gRPC, HTTP) into a single service
+  combined: true
+  # Service type for main service
+  type: ClusterIP
+  # Annotations for the main service
+  annotations: {}
+  # Cluster IP address (optional, leave empty for automatic assignment)
+  # Example: "10.96.0.100"
+  clusterIP: ""
+
 # DNS server configuration
 dns:
   # Port for DNS server (UDP and TCP)
   port: 53
-  # Service type for DNS service
-  serviceType: ClusterIP
 
 # gRPC server configuration
 grpc:
   # Port for gRPC server
   port: 5354
-  # Service type for gRPC service
-  serviceType: ClusterIP
 
 # HTTP server configuration (health/metrics)
 http:
   # Port for HTTP server
   port: 8080
+
+# Local service (for local traffic only)
+localService:
+  # Enable a second service with local routing policy
+  enabled: false
+  # This service will have spec.internalTrafficPolicy: Local
+  # Only routes to endpoints on the same node
+  annotations: {}
+  # Cluster IP address for local service (optional)
+  # Example: "10.96.0.101"
+  clusterIP: ""
 
 # Pattern matching configuration
 patterns:

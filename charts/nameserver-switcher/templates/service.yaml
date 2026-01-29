@@ -1,3 +1,39 @@
+{{- if .Values.service.combined }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nameserver-switcher.fullname" . }}
+  labels:
+    {{- include "nameserver-switcher.labels" . | nindent 4 }}
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if .Values.service.clusterIP }}
+  clusterIP: {{ .Values.service.clusterIP }}
+  {{- end }}
+  ports:
+    - port: {{ .Values.dns.port }}
+      targetPort: dns-udp
+      protocol: UDP
+      name: dns-udp
+    - port: {{ .Values.dns.port }}
+      targetPort: dns-tcp
+      protocol: TCP
+      name: dns-tcp
+    - port: {{ .Values.grpc.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+    - port: {{ .Values.http.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "nameserver-switcher.selectorLabels" . | nindent 4 }}
+{{- else }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -49,3 +85,43 @@ spec:
       name: http
   selector:
     {{- include "nameserver-switcher.selectorLabels" . | nindent 4 }}
+{{- end }}
+{{- if .Values.localService.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nameserver-switcher.fullname" . }}-local
+  labels:
+    {{- include "nameserver-switcher.labels" . | nindent 4 }}
+    app.kubernetes.io/component: local-service
+  {{- with .Values.localService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if .Values.localService.clusterIP }}
+  clusterIP: {{ .Values.localService.clusterIP }}
+  {{- end }}
+  internalTrafficPolicy: Local
+  ports:
+    - port: {{ .Values.dns.port }}
+      targetPort: dns-udp
+      protocol: UDP
+      name: dns-udp
+    - port: {{ .Values.dns.port }}
+      targetPort: dns-tcp
+      protocol: TCP
+      name: dns-tcp
+    - port: {{ .Values.grpc.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+    - port: {{ .Values.http.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "nameserver-switcher.selectorLabels" . | nindent 4 }}
+{{- end }}

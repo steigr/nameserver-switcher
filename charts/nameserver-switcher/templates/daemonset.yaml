@@ -1,13 +1,12 @@
-{{- if eq .Values.deploymentType "Deployment" }}
+{{- if eq .Values.deploymentType "DaemonSet" }}
 apiVersion: apps/v1
-kind: Deployment
+kind: DaemonSet
 metadata:
   name: {{ include "nameserver-switcher.fullname" . }}
   labels:
     {{- include "nameserver-switcher.labels" . | nindent 4 }}
-    app.kubernetes.io/component: deployment
+    app.kubernetes.io/component: daemonset
 spec:
-  replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
       {{- include "nameserver-switcher.selectorLabels" . | nindent 6 }}
@@ -22,8 +21,4 @@ spec:
         {{- include "nameserver-switcher.selectorLabels" . | nindent 8 }}
     spec:
       {{- include "nameserver-switcher.podSpec" . | nindent 6 }}
-      {{- with .Values.affinity }}
-      affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
 {{- end }}
