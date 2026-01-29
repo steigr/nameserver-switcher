@@ -272,4 +272,12 @@ func TestApp_StartWithPortConflict(t *testing.T) {
 
 	err = app2.Start()
 	assert.Error(t, err, "Should fail due to port conflict")
+
+	// Clean up app2's partially started servers to avoid race condition
+	if app2 != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		app2.Shutdown(ctx)                // Shutdown any servers that may have started
+		time.Sleep(50 * time.Millisecond) // Give time for goroutines to stop
+	}
 }

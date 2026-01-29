@@ -73,6 +73,7 @@ type LogEntry struct {
 
 // defaultLogger is the global logger instance.
 var defaultLogger = NewLogger(Config{})
+var defaultLoggerMu sync.RWMutex
 
 // NewLogger creates a new logger with the given configuration.
 func NewLogger(cfg Config) *Logger {
@@ -96,11 +97,15 @@ func NewLogger(cfg Config) *Logger {
 
 // SetDefault sets the default global logger.
 func SetDefault(l *Logger) {
+	defaultLoggerMu.Lock()
+	defer defaultLoggerMu.Unlock()
 	defaultLogger = l
 }
 
 // Default returns the default global logger.
 func Default() *Logger {
+	defaultLoggerMu.RLock()
+	defer defaultLoggerMu.RUnlock()
 	return defaultLogger
 }
 
@@ -255,42 +260,42 @@ func (l *Logger) Errorf(format string, args ...interface{}) {
 
 // Debug logs a debug message using the default logger.
 func Debug(msg string, fields ...map[string]interface{}) {
-	defaultLogger.Debug(msg, fields...)
+	Default().Debug(msg, fields...)
 }
 
 // Info logs an info message using the default logger.
 func Info(msg string, fields ...map[string]interface{}) {
-	defaultLogger.Info(msg, fields...)
+	Default().Info(msg, fields...)
 }
 
 // Warn logs a warning message using the default logger.
 func Warn(msg string, fields ...map[string]interface{}) {
-	defaultLogger.Warn(msg, fields...)
+	Default().Warn(msg, fields...)
 }
 
 // Error logs an error message using the default logger.
 func Error(msg string, fields ...map[string]interface{}) {
-	defaultLogger.Error(msg, fields...)
+	Default().Error(msg, fields...)
 }
 
 // Debugf logs a formatted debug message using the default logger.
 func Debugf(format string, args ...interface{}) {
-	defaultLogger.Debugf(format, args...)
+	Default().Debugf(format, args...)
 }
 
 // Infof logs a formatted info message using the default logger.
 func Infof(format string, args ...interface{}) {
-	defaultLogger.Infof(format, args...)
+	Default().Infof(format, args...)
 }
 
 // Warnf logs a formatted warning message using the default logger.
 func Warnf(format string, args ...interface{}) {
-	defaultLogger.Warnf(format, args...)
+	Default().Warnf(format, args...)
 }
 
 // Errorf logs a formatted error message using the default logger.
 func Errorf(format string, args ...interface{}) {
-	defaultLogger.Errorf(format, args...)
+	Default().Errorf(format, args...)
 }
 
 // --- Specialized DNS logging functions ---
@@ -390,15 +395,15 @@ func (l *Logger) LogDNSDebug(debug DNSDebug) {
 
 // LogDNSRequest logs a DNS request using the default logger.
 func LogDNSRequest(req DNSRequest) {
-	defaultLogger.LogDNSRequest(req)
+	Default().LogDNSRequest(req)
 }
 
 // LogDNSResponse logs a DNS response using the default logger.
 func LogDNSResponse(resp DNSResponse) {
-	defaultLogger.LogDNSResponse(resp)
+	Default().LogDNSResponse(resp)
 }
 
 // LogDNSDebug logs DNS routing debug information using the default logger.
 func LogDNSDebug(debug DNSDebug) {
-	defaultLogger.LogDNSDebug(debug)
+	Default().LogDNSDebug(debug)
 }
