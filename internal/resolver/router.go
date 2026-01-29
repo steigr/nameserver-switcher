@@ -99,17 +99,16 @@ func (r *Router) Route(ctx context.Context, req *dns.Msg) (*RouteResult, error) 
 				}
 			}
 
-			// No CNAME match, use system resolver
-			if !result.CNAMEMatched {
-				if r.systemResolver != nil {
-					sysResp, err := r.systemResolver.Resolve(ctx, req)
-					if err != nil {
-						return nil, fmt.Errorf("system resolver failed: %w", err)
-					}
-					result.Response = sysResp
-					result.ResolverUsed = r.systemResolver.Name()
-					return result, nil
+			// No CNAME match: CNAME exists but doesn't match pattern, or no CNAME at all
+			// Use system resolver instead
+			if r.systemResolver != nil {
+				sysResp, err := r.systemResolver.Resolve(ctx, req)
+				if err != nil {
+					return nil, fmt.Errorf("system resolver failed: %w", err)
 				}
+				result.Response = sysResp
+				result.ResolverUsed = r.systemResolver.Name()
+				return result, nil
 			}
 		}
 
