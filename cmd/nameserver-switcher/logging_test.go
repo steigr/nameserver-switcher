@@ -15,12 +15,12 @@ import (
 
 // TestLogging_NormalMode tests that normal logging (requests and responses) works.
 func TestLogging_NormalMode(t *testing.T) {
-	t.Skip("Temporarily disabled")
 	cfg := getTestConfig(t)
 	cfg.LogRequests = true
 	cfg.LogResponses = true
 	cfg.Debug = false
 	cfg.RequestPatterns = []string{`.*\.example\.com$`}
+	cfg.RequestResolver = "8.8.8.8:53"
 
 	app, err := NewApp(cfg)
 	require.NoError(t, err)
@@ -39,7 +39,7 @@ func TestLogging_NormalMode(t *testing.T) {
 	// Make a DNS query
 	c := new(dns.Client)
 	m := new(dns.Msg)
-	m.SetQuestion(dns.Fqdn("test.example.com"), dns.TypeA)
+	m.SetQuestion(dns.Fqdn("example.com"), dns.TypeA)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", cfg.DNSPort)
 	_, _, err = c.Exchange(m, addr)
