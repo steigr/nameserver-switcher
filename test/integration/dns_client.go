@@ -115,6 +115,20 @@ func (r *QueryResult) GetFirstARecord() string {
 	return ""
 }
 
+// GetARecords returns all A record IPs from the response.
+func (r *QueryResult) GetARecords() []string {
+	if r.Response == nil {
+		return nil
+	}
+	var ips []string
+	for _, ans := range r.Response.Answer {
+		if a, ok := ans.(*dns.A); ok {
+			ips = append(ips, a.A.String())
+		}
+	}
+	return ips
+}
+
 // IsSuccess returns true if the query was successful (NOERROR).
 func (r *QueryResult) IsSuccess() bool {
 	return r.Error == nil && r.Response != nil && r.Response.Rcode == dns.RcodeSuccess
