@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nameserver-switcher.fullname" . }}-dns
+  labels:
+    {{- include "nameserver-switcher.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.dns.serviceType }}
+  ports:
+    - port: {{ .Values.dns.port }}
+      targetPort: dns-udp
+      protocol: UDP
+      name: dns-udp
+    - port: {{ .Values.dns.port }}
+      targetPort: dns-tcp
+      protocol: TCP
+      name: dns-tcp
+  selector:
+    {{- include "nameserver-switcher.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nameserver-switcher.fullname" . }}-grpc
+  labels:
+    {{- include "nameserver-switcher.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.grpc.serviceType }}
+  ports:
+    - port: {{ .Values.grpc.port }}
+      targetPort: grpc
+      protocol: TCP
+      name: grpc
+  selector:
+    {{- include "nameserver-switcher.selectorLabels" . | nindent 4 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "nameserver-switcher.fullname" . }}
+  labels:
+    {{- include "nameserver-switcher.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.http.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "nameserver-switcher.selectorLabels" . | nindent 4 }}

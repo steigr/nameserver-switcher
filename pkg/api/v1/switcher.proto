@@ -1,0 +1,128 @@
+syntax = "proto3";
+
+package api.v1;
+
+option go_package = "github.com/steigr/nameserver-switcher/pkg/api/v1";
+
+// NameserverSwitcherService provides DNS resolution and configuration management.
+service NameserverSwitcherService {
+  // Resolve performs a DNS lookup following the nameserver-switcher routing logic.
+  rpc Resolve(ResolveRequest) returns (ResolveResponse);
+
+  // GetConfig returns the current configuration.
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+
+  // UpdateRequestPatterns updates the request matching patterns.
+  rpc UpdateRequestPatterns(UpdatePatternsRequest) returns (UpdatePatternsResponse);
+
+  // UpdateCNAMEPatterns updates the CNAME matching patterns.
+  rpc UpdateCNAMEPatterns(UpdatePatternsRequest) returns (UpdatePatternsResponse);
+
+  // GetStats returns current statistics.
+  rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
+}
+
+// ResolveRequest contains a DNS query.
+message ResolveRequest {
+  // The domain name to resolve.
+  string name = 1;
+
+  // The DNS record type (A, AAAA, CNAME, etc.).
+  string type = 2;
+}
+
+// ResolveResponse contains the DNS resolution result.
+message ResolveResponse {
+  // The resolved records.
+  repeated DNSRecord records = 1;
+
+  // Which resolver was used.
+  string resolver_used = 2;
+
+  // Whether the request pattern matched.
+  bool request_matched = 3;
+
+  // Whether the CNAME pattern matched.
+  bool cname_matched = 4;
+
+  // The matched request pattern (if any).
+  string matched_pattern = 5;
+
+  // The matched CNAME pattern (if any).
+  string cname_pattern = 6;
+
+  // The DNS response code.
+  string rcode = 7;
+}
+
+// DNSRecord represents a DNS record.
+message DNSRecord {
+  // Record name.
+  string name = 1;
+
+  // Record type.
+  string type = 2;
+
+  // Record TTL.
+  uint32 ttl = 3;
+
+  // Record value/data.
+  string value = 4;
+}
+
+// GetConfigRequest is empty - no parameters needed.
+message GetConfigRequest {}
+
+// GetConfigResponse contains the current configuration.
+message GetConfigResponse {
+  // Request patterns.
+  repeated string request_patterns = 1;
+
+  // CNAME patterns.
+  repeated string cname_patterns = 2;
+
+  // Request resolver address.
+  string request_resolver = 3;
+
+  // Explicit resolver address.
+  string explicit_resolver = 4;
+}
+
+// UpdatePatternsRequest contains new patterns.
+message UpdatePatternsRequest {
+  // The new patterns to set.
+  repeated string patterns = 1;
+}
+
+// UpdatePatternsResponse indicates the result of the update.
+message UpdatePatternsResponse {
+  // Whether the update was successful.
+  bool success = 1;
+
+  // Error message if unsuccessful.
+  string error = 2;
+
+  // The current patterns after update.
+  repeated string patterns = 3;
+}
+
+// GetStatsRequest is empty - no parameters needed.
+message GetStatsRequest {}
+
+// GetStatsResponse contains statistics.
+message GetStatsResponse {
+  // Total requests processed.
+  uint64 total_requests = 1;
+
+  // Requests by resolver.
+  map<string, uint64> requests_by_resolver = 2;
+
+  // Pattern match counts.
+  map<string, uint64> pattern_matches = 3;
+
+  // CNAME match counts.
+  map<string, uint64> cname_matches = 4;
+
+  // Uptime in seconds.
+  uint64 uptime_seconds = 5;
+}

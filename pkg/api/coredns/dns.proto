@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package coredns.dns;
+
+option go_package = "github.com/steigr/nameserver-switcher/pkg/api/coredns";
+
+// DnsService is the CoreDNS gRPC service interface.
+// This allows CoreDNS to use the grpc plugin to forward queries.
+service DnsService {
+  // Query performs a DNS query using wire format messages.
+  rpc Query(DnsPacket) returns (DnsPacket);
+}
+
+// DnsPacket contains a DNS message in wire format.
+message DnsPacket {
+  // The DNS message in wire format.
+  bytes msg = 1;
+}

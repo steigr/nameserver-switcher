@@ -1,0 +1,129 @@
+# Default values for nameserver-switcher.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/steigr/nameserver-switcher
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# DNS server configuration
+dns:
+  # Port for DNS server (UDP and TCP)
+  port: 53
+  # Service type for DNS service
+  serviceType: ClusterIP
+
+# gRPC server configuration
+grpc:
+  # Port for gRPC server
+  port: 5354
+  # Service type for gRPC service
+  serviceType: ClusterIP
+
+# HTTP server configuration (health/metrics)
+http:
+  # Port for HTTP server
+  port: 8080
+
+# Pattern matching configuration
+patterns:
+  # Request patterns - regex patterns to match incoming DNS requests
+  # Example: [".*\\.example\\.com$", "^test\\."]
+  request: []
+
+  # CNAME patterns - regex patterns to match CNAME responses
+  # Example: [".*\\.cdn\\.provider\\.net$"]
+  cname: []
+
+# Resolver configuration
+resolvers:
+  # Request resolver - DNS server for initial non-recursive lookups
+  # Example: "8.8.8.8:53"
+  request: ""
+
+  # Explicit resolver - DNS server for recursive lookups when CNAME matches
+  # Example: "1.1.1.1:53"
+  explicit: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 64Mi
+
+# Prometheus monitoring
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+# Liveness probe
+livenessProbe:
+  httpGet:
+    path: /livez
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Readiness probe
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Extra environment variables
+extraEnv: []
+
+# Extra volume mounts
+extraVolumeMounts: []
+
+# Extra volumes
+extraVolumes: []

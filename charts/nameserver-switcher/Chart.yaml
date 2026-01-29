@@ -1,0 +1,16 @@
+apiVersion: v2
+name: nameserver-switcher
+description: A DNS proxy with intelligent routing based on regex pattern matching
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - dns
+  - proxy
+  - coredns
+  - grpc
+maintainers:
+  - name: steigr
+home: https://github.com/steigr/nameserver-switcher
+sources:
+  - https://github.com/steigr/nameserver-switcher
