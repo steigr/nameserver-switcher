@@ -72,6 +72,5 @@ test/integration/
 test/integration-test/
 
 # Go specific
-go.sum
 go.work
 go.work.sum

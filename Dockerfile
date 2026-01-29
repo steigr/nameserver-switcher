@@ -13,7 +13,9 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source code
-COPY . .
+COPY cmd ./cmd
+COPY pkg ./pkg
+COPY internal ./internal
 
 # Build the binary for the native architecture
 RUN CGO_ENABLED=0 go build \
