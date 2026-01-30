@@ -13,39 +13,72 @@ nameserver-switcher is designed as a modular DNS proxy that integrates seamlessl
 
 ==== Core Components
 
-[mermaid]
-....
-flowchart TB
-    subgraph External
-        CoreDNS[CoreDNS]
-        SysDNS[System DNS]
-        ExpDNS[Explicit DNS]
-        Prom[Prometheus]
-    end
-
-    subgraph nameserver-switcher
-        DNS[DNS Server]
-        GRPC[gRPC Server]
-        HTTP[HTTP Server]
-        Router[Router]
-        Matcher[Matcher]
-        Resolver[Resolver]
-        Metrics[Metrics]
-    end
-
-    CoreDNS -->|forward plugin| DNS
-    CoreDNS -->|grpc plugin| GRPC
-    DNS --> Router
-    GRPC --> Router
-    Router --> Matcher
-    Router --> Resolver
-    DNS --> Metrics
-    GRPC --> Metrics
-    HTTP --> Metrics
-    Router -->|fallback queries| SysDNS
-    Router -->|matched queries| ExpDNS
-    HTTP -->|/metrics| Prom
-....
+[source]
+----
+                                    ┌───────────────────────────────────────────┐
+                                    │               External                    │
+                                    │                                           │
+                                    │  ┌─────────┐                              │
+                                    │  │ CoreDNS │                              │
+                                    │  └────┬────┘                              │
+                                    │       │                                   │
+                                    └───────┼───────────────────────────────────┘
+                  forward plugin            │           grpc plugin
+                     ┌──────────────────────┴──────────────────┐
+                     │                                         │
+                     ▼                                         ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                           nameserver-switcher                                  │
+│                                                                                │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐                                      │
+│  │   DNS    │  │   gRPC   │  │   HTTP   │                                      │
+│  │  Server  │  │  Server  │  │  Server  │                                      │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘                                      │
+│       │             │             │                                            │
+│       │             │             ▼                                            │
+│       │             │       ┌──────────┐                                       │
+│       │             │       │ Metrics  │────────────────────────► Prometheus   │
+│       │             │       └──────────┘                                       │
+│       │             │             ▲                                            │
+│       └──────┬──────┘             │                                            │
+│              │                    │                                            │
+│              ▼                    │                                            │
+│  ┌───────────────────────────────────────────────────────────────────────┐     │
+│  │                            Router                                     │     │
+│  │                                                                       │     │
+│  │   ┌─────────┐      ┌──────────────────────────────────────────────┐   │     │
+│  │   │ Matcher │◄─────│            Routing Logic                     │   │     │
+│  │   │(patterns)      │                                              │   │     │
+│  │   └─────────┘      │  1. Check request against REQUEST_PATTERNS   │   │     │
+│  │                    │  2. If match: query Explicit Resolver        │   │     │
+│  │                    │  3. Check CNAME against CNAME_PATTERNS       │   │     │
+│  │                    │  4. Select final resolver based on result    │   │     │
+│  │                    └──────────────────────────────────────────────┘   │     │
+│  │                                       │                               │     │
+│  │               ┌───────────────────────┼───────────────────────┐       │     │
+│  │               │                       │                       │       │     │
+│  │               ▼                       ▼                       ▼       │     │
+│  │   ┌───────────────────┐   ┌───────────────────┐   ┌───────────────┐   │     │
+│  │   │Explicit Resolver  │   │Passthrough        │   │NoCname        │   │     │
+│  │   │(pattern matched + │   │Resolver           │   │Resolvers      │   │     │
+│  │   │ CNAME matched)    │   │(no pattern match) │   │(fallback)     │   │     │
+│  │   └─────────┬─────────┘   └─────────┬─────────┘   └───────┬───────┘   │     │
+│  │             │                       │                     │           │     │
+│  └─────────────┼───────────────────────┼─────────────────────┼───────────┘     │
+│                │                       │                     │                 │
+└────────────────┼───────────────────────┼─────────────────────┼─────────────────┘
+                 │                       │                     │
+                 ▼                       ▼                     ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                          Upstream DNS Servers                                  │
+│                                                                                │
+│    ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐        │
+│    │   Explicit DNS   │    │    System DNS    │    │   Custom DNS     │        │
+│    │  (e.g., 8.8.8.8) │    │  (/etc/resolv)   │    │   (configurable) │        │
+│    └──────────────────┘    └──────────────────┘    └──────────────────┘        │
+│                                                                                │
+└────────────────────────────────────────────────────────────────────────────────┘
+----
 
 ===== 1. DNS Server
 
