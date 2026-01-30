@@ -7,7 +7,7 @@
 
 == Overview
 
-nameserver-switcher provides comprehensive logging capabilities with support for two output formats:
+nameserver-switcher provides comprehensive logging capabilities powered by https://github.com/uber-go/zap[Uber's zap logger], offering high-performance structured logging with support for two output formats:
 
 * **Text format**: Human-readable logs with timestamps, suitable for development and debugging
 * **JSON format**: Structured logs with millisecond-precision timestamps, suitable for log aggregation and analysis
@@ -123,9 +123,9 @@ Each log entry is a single-line JSON object with the following fields:
 |string (optional)
 |Component name (e.g., `"dns-server"`, `"grpc-server"`)
 
-|`fields`
-|object (optional)
-|Additional structured fields specific to the log entry
+|Additional fields
+|various
+|Context-specific fields added directly to the log entry (not nested)
 |===
 
 ==== Example Output
@@ -133,31 +133,31 @@ Each log entry is a single-line JSON object with the following fields:
 **Startup log:**
 [source,json]
 ----
-{"timemillis":1738161135123,"time":"2026-01-29T14:32:15.123456789Z","level":"INFO","message":"Starting nameserver-switcher..."}
+{"level":"INFO","time":"2026-01-29T14:32:15.123456789Z","message":"Starting nameserver-switcher...","timemillis":1738161135123}
 ----
 
 **DNS request log:**
 [source,json]
 ----
-{"timemillis":1738161135456,"time":"2026-01-29T14:32:15.456789012Z","level":"INFO","message":"DNS request received","fields":{"protocol":"udp","type":"A","name":"example.com.","from":"127.0.0.1:54321"}}
+{"level":"INFO","time":"2026-01-29T14:32:15.456789012Z","message":"DNS request received","protocol":"udp","type":"A","name":"example.com.","from":"127.0.0.1:54321","timemillis":1738161135456}
 ----
 
 **DNS response log:**
 [source,json]
 ----
-{"timemillis":1738161135468,"time":"2026-01-29T14:32:15.468901234Z","level":"INFO","message":"DNS response sent","fields":{"name":"example.com.","rcode":"NOERROR","answer_count":1,"resolver":"system","duration_ms":12.345,"request_matched":true}}
+{"level":"INFO","time":"2026-01-29T14:32:15.468901234Z","message":"DNS response sent","name":"example.com.","rcode":"NOERROR","answer_count":1,"resolver":"system","duration_ms":12.345,"request_matched":true,"timemillis":1738161135468}
 ----
 
 **Debug log (pattern match):**
 [source,json]
 ----
-{"timemillis":1738161135469,"time":"2026-01-29T14:32:15.469012345Z","level":"DEBUG","message":"REQUEST_PATTERN matched","fields":{"pattern":".*\\.example\\.com$","request":"example.com."}}
+{"level":"DEBUG","time":"2026-01-29T14:32:15.469012345Z","message":"REQUEST_PATTERN matched","pattern":".*\\.example\\.com$","request":"example.com.","timemillis":1738161135469}
 ----
 
 **Debug log (CNAME match):**
 [source,json]
 ----
-{"timemillis":1738161135470,"time":"2026-01-29T14:32:15.470123456Z","level":"DEBUG","message":"CNAME_PATTERN matched","fields":{"pattern":".*\\.cdn\\.example\\.com$","cname":"app.cdn.example.com."}}
+{"level":"DEBUG","time":"2026-01-29T14:32:15.470123456Z","message":"CNAME_PATTERN matched","pattern":".*\\.cdn\\.example\\.com$","cname":"app.cdn.example.com.","timemillis":1738161135470}
 ----
 
 == Log Levels
@@ -287,28 +287,28 @@ Logged when `--debug` is enabled:
 
 [source,json]
 ----
-{"level":"DEBUG","message":"REQUEST_PATTERN matched","fields":{"pattern":".*\\.example\\.com$","request":"foo.example.com."}}
+{"level":"DEBUG","time":"2026-01-29T14:32:15.469012345Z","message":"REQUEST_PATTERN matched","pattern":".*\\.example\\.com$","request":"foo.example.com.","timemillis":1738161135469}
 ----
 
 ==== CNAME Pattern Match
 
 [source,json]
 ----
-{"level":"DEBUG","message":"CNAME_PATTERN matched","fields":{"pattern":".*\\.cdn\\.example\\.com$","cname":"app.cdn.example.com."}}
+{"level":"DEBUG","time":"2026-01-29T14:32:15.470123456Z","message":"CNAME_PATTERN matched","pattern":".*\\.cdn\\.example\\.com$","cname":"app.cdn.example.com.","timemillis":1738161135470}
 ----
 
 ==== Resolver Used
 
 [source,json]
 ----
-{"level":"DEBUG","message":"Queried nameserver","fields":{"resolver":"explicit"}}
+{"level":"DEBUG","time":"2026-01-29T14:32:15.471234567Z","message":"Queried nameserver","resolver":"explicit","timemillis":1738161135471}
 ----
 
 ==== Full Response
 
 [source,json]
 ----
-{"level":"DEBUG","message":"Full response","fields":{"response":";; opcode: QUERY, status: NOERROR, id: 12345\n;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 0\n..."}}
+{"level":"DEBUG","time":"2026-01-29T14:32:15.472345678Z","message":"Full response","response":";; opcode: QUERY, status: NOERROR, id: 12345\n;; flags: qr rd ra; QUERY: 1, ANSWER: 2, AUTHORITY: 0, ADDITIONAL: 0\n...","timemillis":1738161135472}
 ----
 
 === Error Logs
@@ -460,7 +460,13 @@ kind: Deployment
 metadata:
   name: nameserver-switcher
 spec:
+  selector:
+    matchLabels:
+      app: nameserver-switcher
   template:
+    metadata:
+      labels:
+        app: nameserver-switcher
     spec:
       containers:
       - name: nameserver-switcher
@@ -490,16 +496,21 @@ Logs can then be collected by:
 cat logs.json | jq 'select(.level == "ERROR")'
 
 # Get all DNS requests for a specific domain
-cat logs.json | jq 'select(.message == "DNS request received" and .fields.name | contains("example.com"))'
+cat logs.json | jq 'select(.message == "DNS request received" and .name | contains("example.com"))'
 
 # Calculate average response time
-cat logs.json | jq 'select(.message == "DNS response sent") | .fields.duration_ms' | awk '{sum+=$1; count++} END {print sum/count}'
+cat logs.json | jq 'select(.message == "DNS response sent") | .duration_ms' | awk '{sum+=$1; count++} END {print sum/count}'
 
 # Count requests by resolver
-cat logs.json | jq -r 'select(.message == "DNS response sent") | .fields.resolver' | sort | uniq -c
+cat logs.json | jq -r 'select(.message == "DNS response sent") | .resolver' | sort | uniq -c
 
 # Find slow queries (>100ms)
-cat logs.json | jq 'select(.message == "DNS response sent" and .fields.duration_ms > 100)'
+cat logs.json | jq 'select(.message == "DNS response sent" and .duration_ms > 100)'
+
+# Filter by timemillis range (last hour)
+NOW=$(date +%s)000
+HOUR_AGO=$((NOW - 3600000))
+cat logs.json | jq --argjson start "$HOUR_AGO" 'select(.timemillis >= $start)'
 ----
 
 === Using `grep` for Text Logs

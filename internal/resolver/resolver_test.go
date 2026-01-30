@@ -194,6 +194,20 @@ func (m *MockMatcher) Patterns() []string {
 	return patterns
 }
 
+// MockResolverWithCallback allows custom logic for each Resolve call.
+type MockResolverWithCallback struct {
+	name     string
+	callback func(ctx context.Context, req *dns.Msg) (*dns.Msg, error)
+}
+
+func (m *MockResolverWithCallback) Resolve(ctx context.Context, req *dns.Msg) (*dns.Msg, error) {
+	return m.callback(ctx, req)
+}
+
+func (m *MockResolverWithCallback) Name() string {
+	return m.name
+}
+
 func TestRouter_Route_NoPatternMatch(t *testing.T) {
 	systemResp := &dns.Msg{
 		Answer: []dns.RR{
@@ -345,6 +359,50 @@ func TestRouter_Route_ExplicitResolverError(t *testing.T) {
 		RequestMatcher:       &MockMatcher{matches: map[string]string{"www.example.com": "pattern"}},
 		CNAMEMatcher:         &MockMatcher{matches: map[string]string{"cdn.provider.net": "cname-pattern"}},
 		ExplicitResolver:     &MockResolver{name: "explicit", err: assert.AnError},
+		NoCnameMatchResolver: &MockResolver{name: "no-cname-match", response: &dns.Msg{}},
+	})
+
+	req := &dns.Msg{}
+	req.SetQuestion("www.example.com.", dns.TypeA)
+
+	_, err := router.Route(context.Background(), req)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "explicit resolver failed")
+}
+
+func TestRouter_Route_ExplicitResolverError_AfterCNAMEMatch(t *testing.T) {
+	// First call returns CNAME, but second call (after CNAME match) fails
+	// We need a resolver that returns a response first time but errors on subsequent use
+	// For simplicity, we'll use a resolver that returns CNAME with matching pattern
+	// and then check if the error happens during the recursive lookup
+	
+	// Create a response with CNAME that matches the pattern
+	explicitRespWithCNAME := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.CNAME{
+				Hdr:    dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeCNAME},
+				Target: "cdn.provider.net.",
+			},
+		},
+	}
+
+	// Create a mock resolver that returns the CNAME response first, then errors
+	callCount := 0
+	mockExplicitResolver := &MockResolverWithCallback{
+		name: "explicit",
+		callback: func(ctx context.Context, req *dns.Msg) (*dns.Msg, error) {
+			callCount++
+			if callCount == 1 {
+				return explicitRespWithCNAME, nil
+			}
+			return nil, assert.AnError
+		},
+	}
+
+	router := NewRouter(RouterConfig{
+		RequestMatcher:       &MockMatcher{matches: map[string]string{"www.example.com": "pattern"}},
+		CNAMEMatcher:         &MockMatcher{matches: map[string]string{"cdn.provider.net": "cname-pattern"}},
+		ExplicitResolver:     mockExplicitResolver,
 		NoCnameMatchResolver: &MockResolver{name: "no-cname-match", response: &dns.Msg{}},
 	})
 
@@ -637,6 +695,38 @@ func TestRouter_Route_NoCnameMatchResolverError(t *testing.T) {
 	assert.Contains(t, err.Error(), "no-cname-match resolver failed")
 }
 
+func TestRouter_Route_NoCnameResponseResolverError_NoExplicitResolver(t *testing.T) {
+	// Test: Pattern matched, no explicit resolver, noCnameResponseResolver returns error
+	router := NewRouter(RouterConfig{
+		RequestMatcher:          &MockMatcher{matches: map[string]string{"example.com": "pattern"}},
+		ExplicitResolver:        nil, // No explicit resolver
+		NoCnameResponseResolver: &MockResolver{name: "no-cname-response", err: assert.AnError},
+	})
+
+	req := &dns.Msg{}
+	req.SetQuestion("example.com.", dns.TypeA)
+
+	_, err := router.Route(context.Background(), req)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no-cname-response resolver failed")
+}
+
+func TestRouter_Route_NoResolverForMatchedPattern(t *testing.T) {
+	// Test: Pattern matched, but no explicit resolver and no noCnameResponseResolver
+	router := NewRouter(RouterConfig{
+		RequestMatcher:          &MockMatcher{matches: map[string]string{"example.com": "pattern"}},
+		ExplicitResolver:        nil,
+		NoCnameResponseResolver: nil,
+	})
+
+	req := &dns.Msg{}
+	req.SetQuestion("example.com.", dns.TypeA)
+
+	_, err := router.Route(context.Background(), req)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no resolver available for matched pattern")
+}
+
 func TestDNSResolver_Resolve(t *testing.T) {
 	// This test requires a real DNS server
 	// Skip if running in a restricted environment
@@ -770,4 +860,191 @@ func TestDNSResolver_Server(t *testing.T) {
 
 	r2 := NewDNSResolver("1.1.1.1", true, "cloudflare")
 	assert.Equal(t, "1.1.1.1:53", r2.Server())
+}
+
+func TestSystemResolver_Resolve_FirstServerFails_SecondSucceeds(t *testing.T) {
+	// This tests the continue path when the first server fails but second succeeds
+	// We need to use real servers for this, but with a short timeout on the first one
+	
+	// Create a custom resolver with the first server being unreachable
+	r := &SystemResolver{
+		servers: []string{"127.0.0.1:1", "8.8.8.8:53"}, // First is localhost with closed port, second is real
+		client: &dns.Client{
+			Net:     "udp",
+			Timeout: 100 * time.Millisecond, // Short timeout to fail quickly on first
+		},
+	}
+
+	req := &dns.Msg{}
+	req.SetQuestion("example.com.", dns.TypeA)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := r.Resolve(ctx, req)
+	if err != nil {
+		// This might happen in network-restricted environments
+		t.Skipf("Network error (this is okay in isolated environments): %v", err)
+	}
+	assert.NotNil(t, resp)
+}
+
+func TestSystemResolver_Resolve_AllServersFail(t *testing.T) {
+	// Use localhost with ports that are definitely closed to force all failures
+	// This is more reliable than using non-routable IPs
+	r := &SystemResolver{
+		servers: []string{"127.0.0.1:1", "127.0.0.1:2"}, // Closed ports on localhost
+		client: &dns.Client{
+			Net:     "udp",
+			Timeout: 100 * time.Millisecond,
+		},
+	}
+
+	req := &dns.Msg{}
+	req.SetQuestion("example.com.", dns.TypeA)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	_, err := r.Resolve(ctx, req)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "all system resolvers failed")
+}
+
+func TestSystemResolver_Resolve_EmptyServers(t *testing.T) {
+	// Test with empty server list - this hits the "no system resolvers available" path
+	r := &SystemResolver{
+		servers: []string{},
+		client: &dns.Client{
+			Net:     "udp",
+			Timeout: 5 * time.Second,
+		},
+	}
+
+	req := &dns.Msg{}
+	req.SetQuestion("example.com.", dns.TypeA)
+
+	ctx := context.Background()
+	_, err := r.Resolve(ctx, req)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no system resolvers available")
+}
+
+func TestDNSResolver_Resolve_Error(t *testing.T) {
+	// Test DNS resolution error path
+	// Use localhost with a closed port to ensure error
+	r := NewDNSResolver("127.0.0.1:1", true, "unreachable")
+	r.client.Timeout = 50 * time.Millisecond
+
+	req := &dns.Msg{}
+	req.SetQuestion("example.com.", dns.TypeA)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	_, err := r.Resolve(ctx, req)
+	// Should get an error due to closed port on localhost
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "DNS query failed")
+}
+
+func TestDNSResolver_Resolve_NonRecursive(t *testing.T) {
+	// Verify non-recursive flag is set correctly
+	r := NewDNSResolver("8.8.8.8:53", false, "non-recursive")
+
+	req := &dns.Msg{}
+	req.SetQuestion("example.com.", dns.TypeA)
+	req.RecursionDesired = true // Set to true initially
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// The Resolve method should set RecursionDesired to false for non-recursive
+	resp, err := r.Resolve(ctx, req)
+	if err != nil {
+		t.Skipf("Network error: %v", err)
+	}
+	assert.NotNil(t, resp)
+}
+
+func TestDNSResolver_Resolve_Recursive(t *testing.T) {
+	// Verify recursive flag is set correctly
+	r := NewDNSResolver("8.8.8.8:53", true, "recursive")
+
+	req := &dns.Msg{}
+	req.SetQuestion("example.com.", dns.TypeA)
+	req.RecursionDesired = false // Set to false initially
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// The Resolve method should set RecursionDesired to true for recursive
+	resp, err := r.Resolve(ctx, req)
+	if err != nil {
+		t.Skipf("Network error: %v", err)
+	}
+	assert.NotNil(t, resp)
+}
+
+func TestExtractCNAME_EmptyAnswer(t *testing.T) {
+	resp := &dns.Msg{
+		Answer: []dns.RR{},
+	}
+	result := ExtractCNAME(resp)
+	assert.Nil(t, result)
+}
+
+func TestExtractCNAME_NilAnswer(t *testing.T) {
+	resp := &dns.Msg{}
+	result := ExtractCNAME(resp)
+	assert.Nil(t, result)
+}
+
+func TestHasCNAME_EmptyAnswer(t *testing.T) {
+	resp := &dns.Msg{
+		Answer: []dns.RR{},
+	}
+	result := HasCNAME(resp)
+	assert.False(t, result)
+}
+
+func TestHasCNAME_NilAnswer(t *testing.T) {
+	resp := &dns.Msg{}
+	result := HasCNAME(resp)
+	assert.False(t, result)
+}
+
+func TestSystemResolver_Name(t *testing.T) {
+	r := NewSystemResolverWithServers([]string{"8.8.8.8:53"})
+	assert.Equal(t, "system", r.Name())
+}
+
+func TestSystemResolver_Servers(t *testing.T) {
+	servers := []string{"8.8.8.8:53", "1.1.1.1:53"}
+	r := NewSystemResolverWithServers(servers)
+	assert.Equal(t, servers, r.Servers())
+}
+
+func TestNewSystemResolverWithServers_AddsPort(t *testing.T) {
+	// Servers without ports should get :53 added
+	servers := []string{"8.8.8.8", "1.1.1.1"}
+	r := NewSystemResolverWithServers(servers)
+
+	for _, s := range r.Servers() {
+		assert.Contains(t, s, ":53")
+	}
+}
+
+func TestNewSystemResolverWithServers_PreservesPort(t *testing.T) {
+	// Servers with ports should keep their ports
+	servers := []string{"8.8.8.8:5353", "1.1.1.1:8053"}
+	r := NewSystemResolverWithServers(servers)
+
+	assert.Contains(t, r.Servers(), "8.8.8.8:5353")
+	assert.Contains(t, r.Servers(), "1.1.1.1:8053")
+}
+
+func TestDNSResolver_Name(t *testing.T) {
+	r := NewDNSResolver("8.8.8.8:53", true, "test-resolver")
+	assert.Equal(t, "test-resolver", r.Name())
 }

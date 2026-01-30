@@ -1,13 +1,14 @@
-// Package logging provides structured logging with support for JSON and text formats.
+// Package logging provides structured logging with support for JSON and text formats using zap.
 package logging
 
 import (
-	"encoding/json"
-	"fmt"
-	"io"
 	"os"
 	"sync"
 	"time"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/buffer"
+	"go.uber.org/zap/zapcore"
 )
 
 // Format represents the log output format.
@@ -34,19 +35,21 @@ const (
 	LevelError Level = "ERROR"
 )
 
-// Logger provides structured logging capabilities.
+// Logger provides structured logging capabilities using zap.
 type Logger struct {
-	mu        sync.Mutex
-	output    io.Writer
+	mu        sync.RWMutex
+	zap       *zap.Logger
+	sugar     *zap.SugaredLogger
 	format    Format
 	debug     bool
 	component string
+	output    zapcore.WriteSyncer
 }
 
 // Config holds logger configuration.
 type Config struct {
 	// Output is the writer for log output (default: os.Stderr).
-	Output io.Writer
+	Output zapcore.WriteSyncer
 	// Format is the log format: "text" or "json" (default: "text").
 	Format Format
 	// Debug enables debug level logging.
@@ -55,7 +58,7 @@ type Config struct {
 	Component string
 }
 
-// LogEntry represents a structured log entry.
+// LogEntry represents a structured log entry (for test compatibility).
 type LogEntry struct {
 	// TimeMillis is the timestamp in milliseconds since Unix epoch.
 	TimeMillis int64 `json:"timemillis"`
@@ -75,11 +78,31 @@ type LogEntry struct {
 var defaultLogger = NewLogger(Config{})
 var defaultLoggerMu sync.RWMutex
 
+// customTimeEncoder encodes time as RFC3339Nano for the "time" field.
+func customTimeEncoder(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString(t.Format(time.RFC3339Nano))
+}
+
+// customTextTimeEncoder encodes time in a human-readable format for text output.
+func customTextTimeEncoder(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString(t.Format("2006/01/02 15:04:05.000"))
+}
+
+// customLevelEncoder encodes levels in uppercase.
+func customLevelEncoder(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString("[" + l.CapitalString() + "]")
+}
+
+// customJSONLevelEncoder encodes levels in uppercase for JSON.
+func customJSONLevelEncoder(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString(l.CapitalString())
+}
+
 // NewLogger creates a new logger with the given configuration.
 func NewLogger(cfg Config) *Logger {
 	output := cfg.Output
 	if output == nil {
-		output = os.Stderr
+		output = zapcore.AddSync(os.Stderr)
 	}
 
 	format := cfg.Format
@@ -87,12 +110,88 @@ func NewLogger(cfg Config) *Logger {
 		format = FormatText
 	}
 
+	level := zapcore.InfoLevel
+	if cfg.Debug {
+		level = zapcore.DebugLevel
+	}
+
+	var encoder zapcore.Encoder
+	if format == FormatJSON {
+		encoderConfig := zapcore.EncoderConfig{
+			TimeKey:        "time",
+			LevelKey:       "level",
+			NameKey:        "logger",
+			CallerKey:      "",
+			FunctionKey:    zapcore.OmitKey,
+			MessageKey:     "message",
+			StacktraceKey:  "",
+			LineEnding:     zapcore.DefaultLineEnding,
+			EncodeLevel:    customJSONLevelEncoder,
+			EncodeTime:     customTimeEncoder,
+			EncodeDuration: zapcore.MillisDurationEncoder,
+			EncodeCaller:   zapcore.ShortCallerEncoder,
+		}
+		encoder = newCustomJSONEncoder(encoderConfig)
+	} else {
+		encoderConfig := zapcore.EncoderConfig{
+			TimeKey:          "time",
+			LevelKey:         "level",
+			NameKey:          "logger",
+			CallerKey:        "",
+			FunctionKey:      zapcore.OmitKey,
+			MessageKey:       "message",
+			StacktraceKey:    "",
+			LineEnding:       zapcore.DefaultLineEnding,
+			EncodeLevel:      customLevelEncoder,
+			EncodeTime:       customTextTimeEncoder,
+			EncodeDuration:   zapcore.MillisDurationEncoder,
+			EncodeCaller:     zapcore.ShortCallerEncoder,
+			ConsoleSeparator: " ",
+		}
+		encoder = zapcore.NewConsoleEncoder(encoderConfig)
+	}
+
+	core := zapcore.NewCore(encoder, output, level)
+	zapLogger := zap.New(core)
+
+	if cfg.Component != "" {
+		zapLogger = zapLogger.With(zap.String("component", cfg.Component))
+	}
+
 	return &Logger{
-		output:    output,
+		zap:       zapLogger,
+		sugar:     zapLogger.Sugar(),
 		format:    format,
 		debug:     cfg.Debug,
 		component: cfg.Component,
+		output:    output,
 	}
+}
+
+// customJSONEncoder wraps the JSON encoder to add timemillis field.
+type customJSONEncoder struct {
+	zapcore.Encoder
+	config zapcore.EncoderConfig
+}
+
+func newCustomJSONEncoder(cfg zapcore.EncoderConfig) zapcore.Encoder {
+	return &customJSONEncoder{
+		Encoder: zapcore.NewJSONEncoder(cfg),
+		config:  cfg,
+	}
+}
+
+func (e *customJSONEncoder) Clone() zapcore.Encoder {
+	return &customJSONEncoder{
+		Encoder: e.Encoder.Clone(),
+		config:  e.config,
+	}
+}
+
+func (e *customJSONEncoder) EncodeEntry(entry zapcore.Entry, fields []zapcore.Field) (*buffer.Buffer, error) {
+	// Add timemillis field
+	fields = append(fields, zap.Int64("timemillis", entry.Time.UnixMilli()))
+	return e.Encoder.EncodeEntry(entry, fields)
 }
 
 // SetDefault sets the default global logger.
@@ -111,11 +210,17 @@ func Default() *Logger {
 
 // WithComponent returns a new logger with the specified component name.
 func (l *Logger) WithComponent(component string) *Logger {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+
+	newZap := l.zap.With(zap.String("component", component))
 	return &Logger{
-		output:    l.output,
+		zap:       newZap,
+		sugar:     newZap.Sugar(),
 		format:    l.format,
 		debug:     l.debug,
 		component: component,
+		output:    l.output,
 	}
 }
 
@@ -124,6 +229,55 @@ func (l *Logger) SetDebug(debug bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.debug = debug
+
+	// Rebuild the logger with new level
+	level := zapcore.InfoLevel
+	if debug {
+		level = zapcore.DebugLevel
+	}
+
+	var encoder zapcore.Encoder
+	if l.format == FormatJSON {
+		encoderConfig := zapcore.EncoderConfig{
+			TimeKey:        "time",
+			LevelKey:       "level",
+			NameKey:        "logger",
+			CallerKey:      "",
+			FunctionKey:    zapcore.OmitKey,
+			MessageKey:     "message",
+			StacktraceKey:  "",
+			LineEnding:     zapcore.DefaultLineEnding,
+			EncodeLevel:    customJSONLevelEncoder,
+			EncodeTime:     customTimeEncoder,
+			EncodeDuration: zapcore.MillisDurationEncoder,
+			EncodeCaller:   zapcore.ShortCallerEncoder,
+		}
+		encoder = newCustomJSONEncoder(encoderConfig)
+	} else {
+		encoderConfig := zapcore.EncoderConfig{
+			TimeKey:          "time",
+			LevelKey:         "level",
+			NameKey:          "logger",
+			CallerKey:        "",
+			FunctionKey:      zapcore.OmitKey,
+			MessageKey:       "message",
+			StacktraceKey:    "",
+			LineEnding:       zapcore.DefaultLineEnding,
+			EncodeLevel:      customLevelEncoder,
+			EncodeTime:       customTextTimeEncoder,
+			EncodeDuration:   zapcore.MillisDurationEncoder,
+			EncodeCaller:     zapcore.ShortCallerEncoder,
+			ConsoleSeparator: " ",
+		}
+		encoder = zapcore.NewConsoleEncoder(encoderConfig)
+	}
+
+	core := zapcore.NewCore(encoder, l.output, level)
+	l.zap = zap.New(core)
+	if l.component != "" {
+		l.zap = l.zap.With(zap.String("component", l.component))
+	}
+	l.sugar = l.zap.Sugar()
 }
 
 // SetFormat sets the log format.
@@ -131,129 +285,144 @@ func (l *Logger) SetFormat(format Format) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.format = format
-}
 
-// log writes a log entry.
-func (l *Logger) log(level Level, msg string, fields map[string]interface{}) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	now := time.Now()
-	entry := LogEntry{
-		TimeMillis: now.UnixMilli(),
-		Time:       now.Format(time.RFC3339Nano),
-		Level:      level,
-		Message:    msg,
-		Component:  l.component,
-		Fields:     fields,
+	level := zapcore.InfoLevel
+	if l.debug {
+		level = zapcore.DebugLevel
 	}
 
-	var output string
-	if l.format == FormatJSON {
-		output = l.formatJSON(entry)
-	} else {
-		output = l.formatText(entry)
-	}
-
-	_, _ = fmt.Fprintln(l.output, output)
-}
-
-// formatJSON formats the log entry as JSON.
-func (l *Logger) formatJSON(entry LogEntry) string {
-	data, err := json.Marshal(entry)
-	if err != nil {
-		return fmt.Sprintf(`{"error":"failed to marshal log entry: %v"}`, err)
-	}
-	return string(data)
-}
-
-// formatText formats the log entry as human-readable text.
-func (l *Logger) formatText(entry LogEntry) string {
-	timestamp := time.UnixMilli(entry.TimeMillis).Format("2006/01/02 15:04:05.000")
-
-	var prefix string
-	if entry.Component != "" {
-		prefix = fmt.Sprintf("%s [%s] [%s]", timestamp, entry.Level, entry.Component)
-	} else {
-		prefix = fmt.Sprintf("%s [%s]", timestamp, entry.Level)
-	}
-
-	if len(entry.Fields) == 0 {
-		return fmt.Sprintf("%s %s", prefix, entry.Message)
-	}
-
-	// Format fields as key=value pairs
-	fieldsStr := ""
-	for k, v := range entry.Fields {
-		if fieldsStr != "" {
-			fieldsStr += " "
+	var encoder zapcore.Encoder
+	if format == FormatJSON {
+		encoderConfig := zapcore.EncoderConfig{
+			TimeKey:        "time",
+			LevelKey:       "level",
+			NameKey:        "logger",
+			CallerKey:      "",
+			FunctionKey:    zapcore.OmitKey,
+			MessageKey:     "message",
+			StacktraceKey:  "",
+			LineEnding:     zapcore.DefaultLineEnding,
+			EncodeLevel:    customJSONLevelEncoder,
+			EncodeTime:     customTimeEncoder,
+			EncodeDuration: zapcore.MillisDurationEncoder,
+			EncodeCaller:   zapcore.ShortCallerEncoder,
 		}
-		fieldsStr += fmt.Sprintf("%s=%v", k, v)
+		encoder = newCustomJSONEncoder(encoderConfig)
+	} else {
+		encoderConfig := zapcore.EncoderConfig{
+			TimeKey:          "time",
+			LevelKey:         "level",
+			NameKey:          "logger",
+			CallerKey:        "",
+			FunctionKey:      zapcore.OmitKey,
+			MessageKey:       "message",
+			StacktraceKey:    "",
+			LineEnding:       zapcore.DefaultLineEnding,
+			EncodeLevel:      customLevelEncoder,
+			EncodeTime:       customTextTimeEncoder,
+			EncodeDuration:   zapcore.MillisDurationEncoder,
+			EncodeCaller:     zapcore.ShortCallerEncoder,
+			ConsoleSeparator: " ",
+		}
+		encoder = zapcore.NewConsoleEncoder(encoderConfig)
 	}
 
-	return fmt.Sprintf("%s %s %s", prefix, entry.Message, fieldsStr)
+	core := zapcore.NewCore(encoder, l.output, level)
+	l.zap = zap.New(core)
+	if l.component != "" {
+		l.zap = l.zap.With(zap.String("component", l.component))
+	}
+	l.sugar = l.zap.Sugar()
+}
+
+// fieldsToZapFields converts a map to zap fields.
+func fieldsToZapFields(fields map[string]interface{}) []zap.Field {
+	if fields == nil {
+		return nil
+	}
+	zapFields := make([]zap.Field, 0, len(fields))
+	for k, v := range fields {
+		zapFields = append(zapFields, zap.Any(k, v))
+	}
+	return zapFields
 }
 
 // Debug logs a debug message.
 func (l *Logger) Debug(msg string, fields ...map[string]interface{}) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	if !l.debug {
 		return
 	}
-	var f map[string]interface{}
 	if len(fields) > 0 {
-		f = fields[0]
+		l.zap.Debug(msg, fieldsToZapFields(fields[0])...)
+	} else {
+		l.zap.Debug(msg)
 	}
-	l.log(LevelDebug, msg, f)
 }
 
 // Info logs an info message.
 func (l *Logger) Info(msg string, fields ...map[string]interface{}) {
-	var f map[string]interface{}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	if len(fields) > 0 {
-		f = fields[0]
+		l.zap.Info(msg, fieldsToZapFields(fields[0])...)
+	} else {
+		l.zap.Info(msg)
 	}
-	l.log(LevelInfo, msg, f)
 }
 
 // Warn logs a warning message.
 func (l *Logger) Warn(msg string, fields ...map[string]interface{}) {
-	var f map[string]interface{}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	if len(fields) > 0 {
-		f = fields[0]
+		l.zap.Warn(msg, fieldsToZapFields(fields[0])...)
+	} else {
+		l.zap.Warn(msg)
 	}
-	l.log(LevelWarn, msg, f)
 }
 
 // Error logs an error message.
 func (l *Logger) Error(msg string, fields ...map[string]interface{}) {
-	var f map[string]interface{}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	if len(fields) > 0 {
-		f = fields[0]
+		l.zap.Error(msg, fieldsToZapFields(fields[0])...)
+	} else {
+		l.zap.Error(msg)
 	}
-	l.log(LevelError, msg, f)
 }
 
 // Debugf logs a formatted debug message.
 func (l *Logger) Debugf(format string, args ...interface{}) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
 	if !l.debug {
 		return
 	}
-	l.log(LevelDebug, fmt.Sprintf(format, args...), nil)
+	l.sugar.Debugf(format, args...)
 }
 
 // Infof logs a formatted info message.
 func (l *Logger) Infof(format string, args ...interface{}) {
-	l.log(LevelInfo, fmt.Sprintf(format, args...), nil)
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	l.sugar.Infof(format, args...)
 }
 
 // Warnf logs a formatted warning message.
 func (l *Logger) Warnf(format string, args ...interface{}) {
-	l.log(LevelWarn, fmt.Sprintf(format, args...), nil)
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	l.sugar.Warnf(format, args...)
 }
 
 // Errorf logs a formatted error message.
 func (l *Logger) Errorf(format string, args ...interface{}) {
-	l.log(LevelError, fmt.Sprintf(format, args...), nil)
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	l.sugar.Errorf(format, args...)
 }
 
 // --- Package-level functions using the default logger ---
@@ -360,7 +529,11 @@ func (l *Logger) LogDNSResponse(resp DNSResponse) {
 
 // LogDNSDebug logs DNS routing debug information.
 func (l *Logger) LogDNSDebug(debug DNSDebug) {
-	if !l.debug {
+	l.mu.RLock()
+	isDebug := l.debug
+	l.mu.RUnlock()
+
+	if !isDebug {
 		return
 	}
 
@@ -406,4 +579,16 @@ func LogDNSResponse(resp DNSResponse) {
 // LogDNSDebug logs DNS routing debug information using the default logger.
 func LogDNSDebug(debug DNSDebug) {
 	Default().LogDNSDebug(debug)
+}
+
+// Sync flushes any buffered log entries.
+func (l *Logger) Sync() error {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.zap.Sync()
+}
+
+// Sync flushes any buffered log entries for the default logger.
+func Sync() error {
+	return Default().Sync()
 }

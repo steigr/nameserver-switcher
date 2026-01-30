@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/steigr/nameserver-switcher/internal/config"
 	"github.com/steigr/nameserver-switcher/internal/metrics"
 	"github.com/steigr/nameserver-switcher/internal/resolver"
 )
@@ -518,4 +519,618 @@ func TestServer_Shutdown_ContextCanceled(t *testing.T) {
 
 	// This may or may not error depending on timing
 	_ = server.Shutdown(ctx)
+}
+
+func TestServer_HandleRequest_WithConfig_LogRequests(t *testing.T) {
+	resp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "test.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("1.2.3.4").To4(),
+			},
+		},
+	}
+
+	router := resolver.NewRouter(resolver.RouterConfig{
+		SystemResolver: &mockResolver{name: "system", response: resp},
+	})
+
+	// Server with config enabling request logging
+	cfg := &config.Config{
+		LogRequests:  true,
+		LogResponses: false,
+		Debug:        false,
+	}
+
+	server := NewServer(ServerConfig{
+		Addr:   "127.0.0.1",
+		Port:   25363,
+		Router: router,
+		Config: cfg,
+	})
+
+	err := server.Start()
+	require.NoError(t, err)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Make a query
+	client := &dns.Client{Net: "udp"}
+	msg := &dns.Msg{}
+	msg.SetQuestion("test.com.", dns.TypeA)
+
+	reply, _, err := client.Exchange(msg, "127.0.0.1:25363")
+	require.NoError(t, err)
+	assert.NotNil(t, reply)
+}
+
+func TestServer_HandleRequest_WithConfig_LogResponses(t *testing.T) {
+	resp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "test.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("1.2.3.4").To4(),
+			},
+		},
+	}
+
+	router := resolver.NewRouter(resolver.RouterConfig{
+		SystemResolver: &mockResolver{name: "system", response: resp},
+	})
+
+	// Server with config enabling response logging
+	cfg := &config.Config{
+		LogRequests:  false,
+		LogResponses: true,
+		Debug:        false,
+	}
+
+	server := NewServer(ServerConfig{
+		Addr:   "127.0.0.1",
+		Port:   25364,
+		Router: router,
+		Config: cfg,
+	})
+
+	err := server.Start()
+	require.NoError(t, err)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Make a query
+	client := &dns.Client{Net: "udp"}
+	msg := &dns.Msg{}
+	msg.SetQuestion("test.com.", dns.TypeA)
+
+	reply, _, err := client.Exchange(msg, "127.0.0.1:25364")
+	require.NoError(t, err)
+	assert.NotNil(t, reply)
+}
+
+func TestServer_HandleRequest_WithConfig_Debug(t *testing.T) {
+	resp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "test.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("1.2.3.4").To4(),
+			},
+		},
+	}
+
+	router := resolver.NewRouter(resolver.RouterConfig{
+		SystemResolver: &mockResolver{name: "system", response: resp},
+	})
+
+	// Server with config enabling debug logging
+	cfg := &config.Config{
+		LogRequests:  false,
+		LogResponses: false,
+		Debug:        true,
+	}
+
+	server := NewServer(ServerConfig{
+		Addr:   "127.0.0.1",
+		Port:   25365,
+		Router: router,
+		Config: cfg,
+	})
+
+	err := server.Start()
+	require.NoError(t, err)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Make a query
+	client := &dns.Client{Net: "udp"}
+	msg := &dns.Msg{}
+	msg.SetQuestion("test.com.", dns.TypeA)
+
+	reply, _, err := client.Exchange(msg, "127.0.0.1:25365")
+	require.NoError(t, err)
+	assert.NotNil(t, reply)
+}
+
+func TestServer_HandleRequest_WithConfig_Debug_PatternMatch(t *testing.T) {
+	// Response with CNAME that matches the CNAME pattern
+	explicitResp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.CNAME{
+				Hdr:    dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 300},
+				Target: "cdn.provider.net.",
+			},
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "cdn.provider.net.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("10.20.30.40").To4(),
+			},
+		},
+	}
+
+	router := resolver.NewRouter(resolver.RouterConfig{
+		RequestMatcher:   &mockMatcher{matches: map[string]string{"www.example.com": `.*\.example\.com$`}},
+		CNAMEMatcher:     &mockMatcher{matches: map[string]string{"cdn.provider.net": `.*\.provider\.net$`}},
+		ExplicitResolver: &mockResolver{name: "explicit", response: explicitResp},
+		SystemResolver:   &mockResolver{name: "system", response: &dns.Msg{}},
+	})
+
+	// Server with config enabling debug logging
+	cfg := &config.Config{
+		LogRequests:  true,
+		LogResponses: true,
+		Debug:        true,
+	}
+
+	server := NewServer(ServerConfig{
+		Addr:   "127.0.0.1",
+		Port:   25366,
+		Router: router,
+		Config: cfg,
+	})
+
+	err := server.Start()
+	require.NoError(t, err)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Make a query that triggers pattern matching
+	client := &dns.Client{Net: "udp"}
+	msg := &dns.Msg{}
+	msg.SetQuestion("www.example.com.", dns.TypeA)
+
+	reply, _, err := client.Exchange(msg, "127.0.0.1:25366")
+	require.NoError(t, err)
+	assert.NotNil(t, reply)
+}
+
+func TestServer_HandleRequest_WithConfig_Debug_RequestMatchedOnly(t *testing.T) {
+	// Response without CNAME (no CNAME match)
+	explicitResp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("10.20.30.40").To4(),
+			},
+		},
+	}
+
+	systemResp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("1.2.3.4").To4(),
+			},
+		},
+	}
+
+	router := resolver.NewRouter(resolver.RouterConfig{
+		RequestMatcher:          &mockMatcher{matches: map[string]string{"www.example.com": `.*\.example\.com$`}},
+		CNAMEMatcher:            &mockMatcher{matches: map[string]string{}}, // No CNAME matches
+		ExplicitResolver:        &mockResolver{name: "explicit", response: explicitResp},
+		NoCnameResponseResolver: &mockResolver{name: "no-cname-response", response: systemResp},
+	})
+
+	// Server with config enabling debug logging
+	cfg := &config.Config{
+		LogRequests:  true,
+		LogResponses: true,
+		Debug:        true,
+	}
+
+	server := NewServer(ServerConfig{
+		Addr:   "127.0.0.1",
+		Port:   25367,
+		Router: router,
+		Config: cfg,
+	})
+
+	err := server.Start()
+	require.NoError(t, err)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Make a query that triggers request pattern matching only
+	client := &dns.Client{Net: "udp"}
+	msg := &dns.Msg{}
+	msg.SetQuestion("www.example.com.", dns.TypeA)
+
+	reply, _, err := client.Exchange(msg, "127.0.0.1:25367")
+	require.NoError(t, err)
+	assert.NotNil(t, reply)
+}
+
+func TestServer_HandleRequest_WithConfig_AllEnabled(t *testing.T) {
+	resp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "test.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("1.2.3.4").To4(),
+			},
+		},
+	}
+
+	m := metrics.NewMetrics("test_dns_all_enabled")
+
+	router := resolver.NewRouter(resolver.RouterConfig{
+		SystemResolver: &mockResolver{name: "system", response: resp},
+	})
+
+	// Server with all config options enabled
+	cfg := &config.Config{
+		LogRequests:  true,
+		LogResponses: true,
+		Debug:        true,
+	}
+
+	server := NewServer(ServerConfig{
+		Addr:    "127.0.0.1",
+		Port:    25368,
+		Router:  router,
+		Metrics: m,
+		Config:  cfg,
+	})
+
+	err := server.Start()
+	require.NoError(t, err)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Make a query
+	client := &dns.Client{Net: "udp"}
+	msg := &dns.Msg{}
+	msg.SetQuestion("test.com.", dns.TypeA)
+
+	reply, _, err := client.Exchange(msg, "127.0.0.1:25368")
+	require.NoError(t, err)
+	assert.NotNil(t, reply)
+}
+
+func TestServer_HandleRequest_RoutingError_WithConfig(t *testing.T) {
+	m := metrics.NewMetrics("test_dns_error_config")
+
+	router := resolver.NewRouter(resolver.RouterConfig{
+		SystemResolver: &mockResolver{name: "system", err: errors.New("resolver error")},
+	})
+
+	// Server with config
+	cfg := &config.Config{
+		LogRequests:  true,
+		LogResponses: true,
+		Debug:        true,
+	}
+
+	server := NewServer(ServerConfig{
+		Addr:    "127.0.0.1",
+		Port:    25369,
+		Router:  router,
+		Metrics: m,
+		Config:  cfg,
+	})
+
+	err := server.Start()
+	require.NoError(t, err)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Make a query that will fail routing
+	client := &dns.Client{Net: "udp"}
+	msg := &dns.Msg{}
+	msg.SetQuestion("test.com.", dns.TypeA)
+
+	reply, _, err := client.Exchange(msg, "127.0.0.1:25369")
+	require.NoError(t, err)
+	assert.NotNil(t, reply)
+	assert.Equal(t, dns.RcodeServerFailure, reply.Rcode)
+}
+
+func TestServer_HandleRequest_TCPWithConfig(t *testing.T) {
+	resp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "test.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("1.2.3.4").To4(),
+			},
+		},
+	}
+
+	m := metrics.NewMetrics("test_dns_tcp_config")
+
+	router := resolver.NewRouter(resolver.RouterConfig{
+		SystemResolver: &mockResolver{name: "system", response: resp},
+	})
+
+	// Server with all config options enabled
+	cfg := &config.Config{
+		LogRequests:  true,
+		LogResponses: true,
+		Debug:        true,
+	}
+
+	server := NewServer(ServerConfig{
+		Addr:    "127.0.0.1",
+		Port:    25370,
+		Router:  router,
+		Metrics: m,
+		Config:  cfg,
+	})
+
+	err := server.Start()
+	require.NoError(t, err)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = server.Shutdown(ctx)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	// Make a TCP query to exercise TCP protocol detection
+	client := &dns.Client{Net: "tcp"}
+	msg := &dns.Msg{}
+	msg.SetQuestion("test.com.", dns.TypeA)
+
+	reply, _, err := client.Exchange(msg, "127.0.0.1:25370")
+	require.NoError(t, err)
+	assert.NotNil(t, reply)
+}
+
+// mockResponseWriter implements dns.ResponseWriter for testing error paths
+type mockResponseWriter struct {
+	localAddr  net.Addr
+	remoteAddr net.Addr
+	writeErr   error
+	written    *dns.Msg
+}
+
+func (m *mockResponseWriter) LocalAddr() net.Addr {
+	return m.localAddr
+}
+
+func (m *mockResponseWriter) RemoteAddr() net.Addr {
+	return m.remoteAddr
+}
+
+func (m *mockResponseWriter) WriteMsg(msg *dns.Msg) error {
+	m.written = msg
+	return m.writeErr
+}
+
+func (m *mockResponseWriter) Write(b []byte) (int, error) {
+	if m.writeErr != nil {
+		return 0, m.writeErr
+	}
+	return len(b), nil
+}
+
+func (m *mockResponseWriter) Close() error {
+	return nil
+}
+
+func (m *mockResponseWriter) TsigStatus() error {
+	return nil
+}
+
+func (m *mockResponseWriter) TsigTimersOnly(bool) {
+}
+
+func (m *mockResponseWriter) Hijack() {
+}
+
+func TestServer_HandleRequest_WriteError(t *testing.T) {
+	resp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "test.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("1.2.3.4").To4(),
+			},
+		},
+	}
+
+	m := metrics.NewMetrics("test_dns_write_error")
+
+	router := resolver.NewRouter(resolver.RouterConfig{
+		SystemResolver: &mockResolver{name: "system", response: resp},
+	})
+
+	server := NewServer(ServerConfig{
+		Addr:    "127.0.0.1",
+		Port:    25371,
+		Router:  router,
+		Metrics: m,
+	})
+
+	// Create a request
+	req := &dns.Msg{}
+	req.SetQuestion("test.com.", dns.TypeA)
+
+	// Create a mock writer that fails on WriteMsg
+	w := &mockResponseWriter{
+		localAddr:  &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 25371},
+		remoteAddr: &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345},
+		writeErr:   errors.New("write error"),
+	}
+
+	// Call handleRequest directly
+	server.handleRequest(w, req)
+	// The test exercises the error path - no assertion needed other than no panic
+}
+
+func TestServer_HandleRequest_WriteError_NoMetrics(t *testing.T) {
+	resp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "test.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("1.2.3.4").To4(),
+			},
+		},
+	}
+
+	router := resolver.NewRouter(resolver.RouterConfig{
+		SystemResolver: &mockResolver{name: "system", response: resp},
+	})
+
+	// Server without metrics
+	server := NewServer(ServerConfig{
+		Addr:   "127.0.0.1",
+		Port:   25372,
+		Router: router,
+	})
+
+	// Create a request
+	req := &dns.Msg{}
+	req.SetQuestion("test.com.", dns.TypeA)
+
+	// Create a mock writer that fails on WriteMsg
+	w := &mockResponseWriter{
+		localAddr:  &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 25372},
+		remoteAddr: &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345},
+		writeErr:   errors.New("write error"),
+	}
+
+	// Call handleRequest directly
+	server.handleRequest(w, req)
+	// The test exercises the error path without metrics - no assertion needed other than no panic
+}
+
+func TestServer_HandleRequest_DirectCall_UDP(t *testing.T) {
+	resp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "test.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("1.2.3.4").To4(),
+			},
+		},
+	}
+
+	m := metrics.NewMetrics("test_dns_direct_udp")
+
+	router := resolver.NewRouter(resolver.RouterConfig{
+		SystemResolver: &mockResolver{name: "system", response: resp},
+	})
+
+	cfg := &config.Config{
+		LogRequests:  true,
+		LogResponses: true,
+		Debug:        true,
+	}
+
+	server := NewServer(ServerConfig{
+		Addr:    "127.0.0.1",
+		Port:    25373,
+		Router:  router,
+		Metrics: m,
+		Config:  cfg,
+	})
+
+	// Create a request
+	req := &dns.Msg{}
+	req.SetQuestion("test.com.", dns.TypeA)
+
+	// Create a mock writer (UDP)
+	w := &mockResponseWriter{
+		localAddr:  &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 25373},
+		remoteAddr: &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345},
+	}
+
+	// Call handleRequest directly
+	server.handleRequest(w, req)
+	assert.NotNil(t, w.written)
+}
+
+func TestServer_HandleRequest_DirectCall_TCP(t *testing.T) {
+	resp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "test.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("1.2.3.4").To4(),
+			},
+		},
+	}
+
+	m := metrics.NewMetrics("test_dns_direct_tcp")
+
+	router := resolver.NewRouter(resolver.RouterConfig{
+		SystemResolver: &mockResolver{name: "system", response: resp},
+	})
+
+	cfg := &config.Config{
+		LogRequests:  true,
+		LogResponses: true,
+		Debug:        true,
+	}
+
+	server := NewServer(ServerConfig{
+		Addr:    "127.0.0.1",
+		Port:    25374,
+		Router:  router,
+		Metrics: m,
+		Config:  cfg,
+	})
+
+	// Create a request
+	req := &dns.Msg{}
+	req.SetQuestion("test.com.", dns.TypeA)
+
+	// Create a mock writer (TCP)
+	w := &mockResponseWriter{
+		localAddr:  &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 25374},
+		remoteAddr: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345},
+	}
+
+	// Call handleRequest directly
+	server.handleRequest(w, req)
+	assert.NotNil(t, w.written)
 }

@@ -4,7 +4,6 @@ package grpc
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -15,6 +14,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"github.com/steigr/nameserver-switcher/internal/config"
+	"github.com/steigr/nameserver-switcher/internal/logging"
 	"github.com/steigr/nameserver-switcher/internal/matcher"
 	"github.com/steigr/nameserver-switcher/internal/metrics"
 	"github.com/steigr/nameserver-switcher/internal/resolver"
@@ -84,11 +84,11 @@ func (s *Server) Start() error {
 		return fmt.Errorf("failed to listen: %w", err)
 	}
 
-	log.Printf("Starting gRPC server on %s", listenAddr)
+	logging.Infof("Starting gRPC server on %s", listenAddr)
 
 	go func() {
 		if err := s.grpcServer.Serve(lis); err != nil {
-			log.Printf("gRPC server error: %v", err)
+			logging.Errorf("gRPC server error: %v", err)
 		}
 	}()
 
@@ -300,7 +300,12 @@ func (s *Server) Query(ctx context.Context, req *coredns.DnsPacket) (*coredns.Dn
 
 	// Log request if enabled
 	if s.cfg != nil && s.cfg.LogRequests {
-		log.Printf("[REQUEST] protocol=grpc type=%s name=%s", qtype, qname)
+		logging.LogDNSRequest(logging.DNSRequest{
+			Protocol: "grpc",
+			Type:     qtype,
+			Name:     qname,
+			From:     "grpc-client",
+		})
 	}
 
 	// Record metrics if available
@@ -327,28 +332,36 @@ func (s *Server) Query(ctx context.Context, req *coredns.DnsPacket) (*coredns.Dn
 			if s.cfg != nil && s.cfg.LogResponses {
 				rcode := dns.RcodeToString[result.Response.Rcode]
 				answerCount := len(result.Response.Answer)
-				log.Printf("[RESPONSE] name=%s rcode=%s answers=%d resolver=%s duration=%.3fms",
-					qname, rcode, answerCount, result.ResolverUsed, duration*1000)
+				logging.LogDNSResponse(logging.DNSResponse{
+					Name:           qname,
+					Rcode:          rcode,
+					AnswerCount:    answerCount,
+					Resolver:       result.ResolverUsed,
+					DurationMs:     duration * 1000,
+					RequestMatched: result.RequestMatched,
+					CNAMEMatched:   result.CNAMEMatched,
+				})
 			}
 
 			// Debug logging
 			if s.cfg != nil && s.cfg.Debug {
+				debug := logging.DNSDebug{
+					Resolver: result.ResolverUsed,
+				}
 				if result.RequestMatched {
-					log.Printf("[DEBUG] REQUEST_PATTERN matched: pattern=%q request=%q",
-						result.MatchedPattern, qname)
+					debug.MatchedPattern = result.MatchedPattern
+					debug.Request = qname
 				}
 				if result.CNAMEMatched {
 					// Extract CNAME from response
 					cnames := resolver.ExtractCNAME(result.Response)
-					cnameStr := ""
 					if len(cnames) > 0 {
-						cnameStr = cnames[0]
+						debug.CNAMEPattern = result.CNAMEPattern
+						debug.CNAME = cnames[0]
 					}
-					log.Printf("[DEBUG] CNAME_PATTERN matched: pattern=%q cname=%q",
-						result.CNAMEPattern, cnameStr)
 				}
-				log.Printf("[DEBUG] Queried nameserver: %s", result.ResolverUsed)
-				log.Printf("[DEBUG] Full response: %s", result.Response.String())
+				debug.FullResponse = result.Response.String()
+				logging.LogDNSDebug(debug)
 			}
 
 			// Ensure the response has the same ID as the request

@@ -3,6 +3,7 @@ package config
 
 import (
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/pflag"
@@ -175,14 +176,29 @@ func (c *Config) LoadFromEnv() {
 	if addr := os.Getenv("HTTP_LISTEN_ADDR"); addr != "" {
 		c.HTTPListenAddr = addr
 	}
-	if debug := os.Getenv("DEBUG"); debug == "true" || debug == "1" {
-		c.Debug = true
+	if port := os.Getenv("DNS_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			c.DNSPort = p
+		}
 	}
-	if logReq := os.Getenv("LOG_REQUESTS"); logReq == "false" || logReq == "0" {
-		c.LogRequests = false
+	if port := os.Getenv("GRPC_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			c.GRPCPort = p
+		}
 	}
-	if logResp := os.Getenv("LOG_RESPONSES"); logResp == "false" || logResp == "0" {
-		c.LogResponses = false
+	if port := os.Getenv("HTTP_PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			c.HTTPPort = p
+		}
+	}
+	if debug := os.Getenv("DEBUG"); debug != "" {
+		c.Debug = debug == "true" || debug == "1"
+	}
+	if logReq := os.Getenv("LOG_REQUESTS"); logReq != "" {
+		c.LogRequests = logReq == "true" || logReq == "1"
+	}
+	if logResp := os.Getenv("LOG_RESPONSES"); logResp != "" {
+		c.LogResponses = logResp == "true" || logResp == "1"
 	}
 	if logFormat := os.Getenv("LOG_FORMAT"); logFormat != "" {
 		c.LogFormat = logFormat
