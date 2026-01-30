@@ -205,8 +205,8 @@ func TestRouter_Route_NoPatternMatch(t *testing.T) {
 	}
 
 	router := NewRouter(RouterConfig{
-		RequestMatcher: &MockMatcher{matches: map[string]string{}},
-		SystemResolver: &MockResolver{name: "system", response: systemResp},
+		RequestMatcher:      &MockMatcher{matches: map[string]string{}},
+		PassthroughResolver: &MockResolver{name: "passthrough", response: systemResp},
 	})
 
 	req := &dns.Msg{}
@@ -214,7 +214,7 @@ func TestRouter_Route_NoPatternMatch(t *testing.T) {
 
 	result, err := router.Route(context.Background(), req)
 	require.NoError(t, err)
-	assert.Equal(t, "system", result.ResolverUsed)
+	assert.Equal(t, "passthrough", result.ResolverUsed)
 	assert.False(t, result.RequestMatched)
 	assert.False(t, result.CNAMEMatched)
 }
@@ -239,10 +239,10 @@ func TestRouter_Route_RequestMatch_NoCNAME(t *testing.T) {
 	}
 
 	router := NewRouter(RouterConfig{
-		RequestMatcher:   &MockMatcher{matches: map[string]string{"www.example.com": `.*\.example\.com$`}},
-		CNAMEMatcher:     &MockMatcher{matches: map[string]string{}},
-		ExplicitResolver: &MockResolver{name: "explicit", response: requestResp},
-		SystemResolver:   &MockResolver{name: "system", response: systemResp},
+		RequestMatcher:          &MockMatcher{matches: map[string]string{"www.example.com": `.*\.example\.com$`}},
+		CNAMEMatcher:            &MockMatcher{matches: map[string]string{}},
+		ExplicitResolver:        &MockResolver{name: "explicit", response: requestResp},
+		NoCnameResponseResolver: &MockResolver{name: "no-cname-response", response: systemResp},
 	})
 
 	req := &dns.Msg{}
@@ -250,7 +250,7 @@ func TestRouter_Route_RequestMatch_NoCNAME(t *testing.T) {
 
 	result, err := router.Route(context.Background(), req)
 	require.NoError(t, err)
-	assert.Equal(t, "system", result.ResolverUsed)
+	assert.Equal(t, "no-cname-response", result.ResolverUsed)
 	assert.True(t, result.RequestMatched)
 	assert.False(t, result.CNAMEMatched)
 }
@@ -266,10 +266,10 @@ func TestRouter_Route_RequestMatch_CNAMEMatch(t *testing.T) {
 	}
 
 	router := NewRouter(RouterConfig{
-		RequestMatcher:   &MockMatcher{matches: map[string]string{"www.example.com": `.*\.example\.com$`}},
-		CNAMEMatcher:     &MockMatcher{matches: map[string]string{"cdn.provider.net": `.*\.provider\.net$`}},
-		ExplicitResolver: &MockResolver{name: "explicit", response: explicitRespWithCNAME},
-		SystemResolver:   &MockResolver{name: "system", response: &dns.Msg{}},
+		RequestMatcher:       &MockMatcher{matches: map[string]string{"www.example.com": `.*\.example\.com$`}},
+		CNAMEMatcher:         &MockMatcher{matches: map[string]string{"cdn.provider.net": `.*\.provider\.net$`}},
+		ExplicitResolver:     &MockResolver{name: "explicit", response: explicitRespWithCNAME},
+		NoCnameMatchResolver: &MockResolver{name: "no-cname-match", response: &dns.Msg{}},
 	})
 
 	req := &dns.Msg{}
@@ -327,9 +327,9 @@ func TestRouter_Route_NoResolver(t *testing.T) {
 
 func TestRouter_Route_ExplicitResolverError_OnMatch(t *testing.T) {
 	router := NewRouter(RouterConfig{
-		RequestMatcher:   &MockMatcher{matches: map[string]string{"example.com": "pattern"}},
-		ExplicitResolver: &MockResolver{name: "explicit", err: assert.AnError},
-		SystemResolver:   &MockResolver{name: "system", response: &dns.Msg{}},
+		RequestMatcher:          &MockMatcher{matches: map[string]string{"example.com": "pattern"}},
+		ExplicitResolver:        &MockResolver{name: "explicit", err: assert.AnError},
+		NoCnameResponseResolver: &MockResolver{name: "no-cname-response", response: &dns.Msg{}},
 	})
 
 	req := &dns.Msg{}
@@ -342,9 +342,10 @@ func TestRouter_Route_ExplicitResolverError_OnMatch(t *testing.T) {
 
 func TestRouter_Route_ExplicitResolverError(t *testing.T) {
 	router := NewRouter(RouterConfig{
-		RequestMatcher:   &MockMatcher{matches: map[string]string{"www.example.com": "pattern"}},
-		CNAMEMatcher:     &MockMatcher{matches: map[string]string{"cdn.provider.net": "cname-pattern"}},
-		ExplicitResolver: &MockResolver{name: "explicit", err: assert.AnError},
+		RequestMatcher:       &MockMatcher{matches: map[string]string{"www.example.com": "pattern"}},
+		CNAMEMatcher:         &MockMatcher{matches: map[string]string{"cdn.provider.net": "cname-pattern"}},
+		ExplicitResolver:     &MockResolver{name: "explicit", err: assert.AnError},
+		NoCnameMatchResolver: &MockResolver{name: "no-cname-match", response: &dns.Msg{}},
 	})
 
 	req := &dns.Msg{}
@@ -355,10 +356,10 @@ func TestRouter_Route_ExplicitResolverError(t *testing.T) {
 	assert.Contains(t, err.Error(), "explicit resolver failed")
 }
 
-func TestRouter_Route_SystemResolverError(t *testing.T) {
+func TestRouter_Route_PassthroughResolverError(t *testing.T) {
 	router := NewRouter(RouterConfig{
-		RequestMatcher: &MockMatcher{matches: map[string]string{}},
-		SystemResolver: &MockResolver{name: "system", err: assert.AnError},
+		RequestMatcher:      &MockMatcher{matches: map[string]string{}},
+		PassthroughResolver: &MockResolver{name: "passthrough", err: assert.AnError},
 	})
 
 	req := &dns.Msg{}
@@ -366,10 +367,10 @@ func TestRouter_Route_SystemResolverError(t *testing.T) {
 
 	_, err := router.Route(context.Background(), req)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "system resolver failed")
+	assert.Contains(t, err.Error(), "passthrough resolver failed")
 }
 
-func TestRouter_Route_CNAMENoMatch_UsesSystem(t *testing.T) {
+func TestRouter_Route_CNAMENoMatch_UsesNoCnameMatchResolver(t *testing.T) {
 	explicitResp := &dns.Msg{
 		Answer: []dns.RR{
 			&dns.CNAME{
@@ -379,7 +380,7 @@ func TestRouter_Route_CNAMENoMatch_UsesSystem(t *testing.T) {
 		},
 	}
 
-	systemResp := &dns.Msg{
+	noCnameMatchResp := &dns.Msg{
 		Answer: []dns.RR{
 			&dns.A{
 				Hdr: dns.RR_Header{Name: "www.example.com.", Rrtype: dns.TypeA},
@@ -389,10 +390,10 @@ func TestRouter_Route_CNAMENoMatch_UsesSystem(t *testing.T) {
 	}
 
 	router := NewRouter(RouterConfig{
-		RequestMatcher:   &MockMatcher{matches: map[string]string{"www.example.com": "pattern"}},
-		CNAMEMatcher:     &MockMatcher{matches: map[string]string{"cdn.provider.net": "cname-pattern"}},
-		ExplicitResolver: &MockResolver{name: "explicit", response: explicitResp},
-		SystemResolver:   &MockResolver{name: "system", response: systemResp},
+		RequestMatcher:       &MockMatcher{matches: map[string]string{"www.example.com": "pattern"}},
+		CNAMEMatcher:         &MockMatcher{matches: map[string]string{"cdn.provider.net": "cname-pattern"}},
+		ExplicitResolver:     &MockResolver{name: "explicit", response: explicitResp},
+		NoCnameMatchResolver: &MockResolver{name: "no-cname-match", response: noCnameMatchResp},
 	})
 
 	req := &dns.Msg{}
@@ -400,7 +401,7 @@ func TestRouter_Route_CNAMENoMatch_UsesSystem(t *testing.T) {
 
 	result, err := router.Route(context.Background(), req)
 	require.NoError(t, err)
-	assert.Equal(t, "system", result.ResolverUsed)
+	assert.Equal(t, "no-cname-match", result.ResolverUsed)
 	assert.True(t, result.RequestMatched)
 	assert.False(t, result.CNAMEMatched)
 }
@@ -416,8 +417,8 @@ func TestRouter_Route_NilRequestMatcher(t *testing.T) {
 	}
 
 	router := NewRouter(RouterConfig{
-		RequestMatcher: nil,
-		SystemResolver: &MockResolver{name: "system", response: systemResp},
+		RequestMatcher:      nil,
+		PassthroughResolver: &MockResolver{name: "passthrough", response: systemResp},
 	})
 
 	req := &dns.Msg{}
@@ -425,7 +426,7 @@ func TestRouter_Route_NilRequestMatcher(t *testing.T) {
 
 	result, err := router.Route(context.Background(), req)
 	require.NoError(t, err)
-	assert.Equal(t, "system", result.ResolverUsed)
+	assert.Equal(t, "passthrough", result.ResolverUsed)
 	assert.False(t, result.RequestMatched)
 }
 
@@ -441,9 +442,9 @@ func TestRouter_Route_RequestMatch_NoExplicitResolver(t *testing.T) {
 	}
 
 	router := NewRouter(RouterConfig{
-		RequestMatcher:   &MockMatcher{matches: map[string]string{"www.example.com": "pattern"}},
-		ExplicitResolver: nil, // No explicit resolver
-		SystemResolver:   &MockResolver{name: "system", response: systemResp},
+		RequestMatcher:          &MockMatcher{matches: map[string]string{"www.example.com": "pattern"}},
+		ExplicitResolver:        nil, // No explicit resolver
+		NoCnameResponseResolver: &MockResolver{name: "no-cname-response", response: systemResp},
 	})
 
 	req := &dns.Msg{}
@@ -451,8 +452,189 @@ func TestRouter_Route_RequestMatch_NoExplicitResolver(t *testing.T) {
 
 	result, err := router.Route(context.Background(), req)
 	require.NoError(t, err)
-	assert.Equal(t, "system", result.ResolverUsed)
+	assert.Equal(t, "no-cname-response", result.ResolverUsed)
 	assert.True(t, result.RequestMatched)
+}
+
+// Test backward compatibility: SystemResolver is used when specific resolvers are not set
+func TestRouter_Route_BackwardCompatibility_SystemResolver(t *testing.T) {
+	systemResp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA},
+				A:   []byte{1, 2, 3, 4},
+			},
+		},
+	}
+
+	// Using deprecated SystemResolver field for backward compatibility
+	router := NewRouter(RouterConfig{
+		RequestMatcher: &MockMatcher{matches: map[string]string{}},
+		SystemResolver: &MockResolver{name: "system", response: systemResp},
+	})
+
+	req := &dns.Msg{}
+	req.SetQuestion("example.com.", dns.TypeA)
+
+	result, err := router.Route(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, "system", result.ResolverUsed)
+}
+
+// Test that each resolver can be independently configured
+func TestRouter_Route_IndependentResolvers(t *testing.T) {
+	passthroughResp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "unmatched.com.", Rrtype: dns.TypeA},
+				A:   []byte{1, 1, 1, 1},
+			},
+		},
+	}
+
+	noCnameResponseResp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "direct.example.com.", Rrtype: dns.TypeA},
+				A:   []byte{2, 2, 2, 2},
+			},
+		},
+	}
+
+	noCnameMatchResp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "external.example.com.", Rrtype: dns.TypeA},
+				A:   []byte{3, 3, 3, 3},
+			},
+		},
+	}
+
+	explicitRespNoCname := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "direct.example.com.", Rrtype: dns.TypeA},
+				A:   []byte{10, 10, 10, 10},
+			},
+		},
+	}
+
+	explicitRespWithCname := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.CNAME{
+				Hdr:    dns.RR_Header{Name: "external.example.com.", Rrtype: dns.TypeCNAME},
+				Target: "external.provider.net.",
+			},
+		},
+	}
+
+	t.Run("passthrough resolver for unmatched requests", func(t *testing.T) {
+		router := NewRouter(RouterConfig{
+			RequestMatcher:          &MockMatcher{matches: map[string]string{"example.com": "pattern"}},
+			CNAMEMatcher:            &MockMatcher{matches: map[string]string{"match.cdn.net": "cname-pattern"}},
+			PassthroughResolver:     &MockResolver{name: "passthrough", response: passthroughResp},
+			NoCnameResponseResolver: &MockResolver{name: "no-cname-response", response: noCnameResponseResp},
+			NoCnameMatchResolver:    &MockResolver{name: "no-cname-match", response: noCnameMatchResp},
+		})
+
+		req := &dns.Msg{}
+		req.SetQuestion("unmatched.com.", dns.TypeA)
+
+		result, err := router.Route(context.Background(), req)
+		require.NoError(t, err)
+		assert.Equal(t, "passthrough", result.ResolverUsed)
+		assert.False(t, result.RequestMatched)
+	})
+
+	t.Run("no-cname-response resolver for responses without CNAME", func(t *testing.T) {
+		router := NewRouter(RouterConfig{
+			RequestMatcher:          &MockMatcher{matches: map[string]string{"direct.example.com": "pattern"}},
+			CNAMEMatcher:            &MockMatcher{matches: map[string]string{"match.cdn.net": "cname-pattern"}},
+			ExplicitResolver:        &MockResolver{name: "explicit", response: explicitRespNoCname},
+			PassthroughResolver:     &MockResolver{name: "passthrough", response: passthroughResp},
+			NoCnameResponseResolver: &MockResolver{name: "no-cname-response", response: noCnameResponseResp},
+			NoCnameMatchResolver:    &MockResolver{name: "no-cname-match", response: noCnameMatchResp},
+		})
+
+		req := &dns.Msg{}
+		req.SetQuestion("direct.example.com.", dns.TypeA)
+
+		result, err := router.Route(context.Background(), req)
+		require.NoError(t, err)
+		assert.Equal(t, "no-cname-response", result.ResolverUsed)
+		assert.True(t, result.RequestMatched)
+		assert.False(t, result.CNAMEMatched)
+	})
+
+	t.Run("no-cname-match resolver for CNAME that doesn't match pattern", func(t *testing.T) {
+		router := NewRouter(RouterConfig{
+			RequestMatcher:          &MockMatcher{matches: map[string]string{"external.example.com": "pattern"}},
+			CNAMEMatcher:            &MockMatcher{matches: map[string]string{"match.cdn.net": "cname-pattern"}},
+			ExplicitResolver:        &MockResolver{name: "explicit", response: explicitRespWithCname},
+			PassthroughResolver:     &MockResolver{name: "passthrough", response: passthroughResp},
+			NoCnameResponseResolver: &MockResolver{name: "no-cname-response", response: noCnameResponseResp},
+			NoCnameMatchResolver:    &MockResolver{name: "no-cname-match", response: noCnameMatchResp},
+		})
+
+		req := &dns.Msg{}
+		req.SetQuestion("external.example.com.", dns.TypeA)
+
+		result, err := router.Route(context.Background(), req)
+		require.NoError(t, err)
+		assert.Equal(t, "no-cname-match", result.ResolverUsed)
+		assert.True(t, result.RequestMatched)
+		assert.False(t, result.CNAMEMatched)
+	})
+}
+
+// Test error handling for each resolver type
+func TestRouter_Route_NoCnameResponseResolverError(t *testing.T) {
+	explicitResp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA},
+				A:   []byte{1, 2, 3, 4},
+			},
+		},
+	}
+
+	router := NewRouter(RouterConfig{
+		RequestMatcher:          &MockMatcher{matches: map[string]string{"example.com": "pattern"}},
+		ExplicitResolver:        &MockResolver{name: "explicit", response: explicitResp},
+		NoCnameResponseResolver: &MockResolver{name: "no-cname-response", err: assert.AnError},
+	})
+
+	req := &dns.Msg{}
+	req.SetQuestion("example.com.", dns.TypeA)
+
+	_, err := router.Route(context.Background(), req)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no-cname-response resolver failed")
+}
+
+func TestRouter_Route_NoCnameMatchResolverError(t *testing.T) {
+	explicitResp := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.CNAME{
+				Hdr:    dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeCNAME},
+				Target: "external.net.",
+			},
+		},
+	}
+
+	router := NewRouter(RouterConfig{
+		RequestMatcher:       &MockMatcher{matches: map[string]string{"example.com": "pattern"}},
+		CNAMEMatcher:         &MockMatcher{matches: map[string]string{"match.cdn.net": "cname-pattern"}},
+		ExplicitResolver:     &MockResolver{name: "explicit", response: explicitResp},
+		NoCnameMatchResolver: &MockResolver{name: "no-cname-match", err: assert.AnError},
+	})
+
+	req := &dns.Msg{}
+	req.SetQuestion("example.com.", dns.TypeA)
+
+	_, err := router.Route(context.Background(), req)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no-cname-match resolver failed")
 }
 
 func TestDNSResolver_Resolve(t *testing.T) {

@@ -44,6 +44,18 @@ containers:
       - name: EXPLICIT_RESOLVER
         value: {{ .Values.resolvers.explicit | quote }}
       {{- end }}
+      {{- if .Values.resolvers.passthrough }}
+      - name: PASSTHROUGH_RESOLVER
+        value: {{ .Values.resolvers.passthrough | quote }}
+      {{- end }}
+      {{- if .Values.resolvers.noCnameResponse }}
+      - name: NO_CNAME_RESPONSE_RESOLVER
+        value: {{ .Values.resolvers.noCnameResponse | quote }}
+      {{- end }}
+      {{- if .Values.resolvers.noCnameMatch }}
+      - name: NO_CNAME_MATCH_RESOLVER
+        value: {{ .Values.resolvers.noCnameMatch | quote }}
+      {{- end }}
       {{- with .Values.extraEnv }}
       {{- toYaml . | nindent 6 }}
       {{- end }}

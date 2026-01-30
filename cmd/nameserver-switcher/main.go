@@ -85,12 +85,42 @@ func NewApp(cfg *config.Config) (*App, error) {
 		logging.Infof("Using system resolvers: %v", sysRes.Servers())
 	}
 
+	// Create specialized fallback resolvers, defaulting to systemResolver if not configured
+	var passthroughResolver resolver.Resolver
+	if cfg.PassthroughResolver != "" {
+		passthroughResolver = resolver.NewDNSResolver(cfg.PassthroughResolver, true, "passthrough")
+		logging.Infof("Using passthrough resolver: %s", cfg.PassthroughResolver)
+	} else {
+		passthroughResolver = systemResolver
+		logging.Info("Passthrough resolver not configured, using system resolver")
+	}
+
+	var noCnameResponseResolver resolver.Resolver
+	if cfg.NoCnameResponseResolver != "" {
+		noCnameResponseResolver = resolver.NewDNSResolver(cfg.NoCnameResponseResolver, true, "no-cname-response")
+		logging.Infof("Using no-cname-response resolver: %s", cfg.NoCnameResponseResolver)
+	} else {
+		noCnameResponseResolver = systemResolver
+		logging.Info("No-cname-response resolver not configured, using system resolver")
+	}
+
+	var noCnameMatchResolver resolver.Resolver
+	if cfg.NoCnameMatchResolver != "" {
+		noCnameMatchResolver = resolver.NewDNSResolver(cfg.NoCnameMatchResolver, true, "no-cname-match")
+		logging.Infof("Using no-cname-match resolver: %s", cfg.NoCnameMatchResolver)
+	} else {
+		noCnameMatchResolver = systemResolver
+		logging.Info("No-cname-match resolver not configured, using system resolver")
+	}
+
 	// Create router
 	router := resolver.NewRouter(resolver.RouterConfig{
-		RequestMatcher:   requestMatcher,
-		CNAMEMatcher:     cnameMatcher,
-		ExplicitResolver: explicitResolver,
-		SystemResolver:   systemResolver,
+		RequestMatcher:          requestMatcher,
+		CNAMEMatcher:            cnameMatcher,
+		ExplicitResolver:        explicitResolver,
+		PassthroughResolver:     passthroughResolver,
+		NoCnameResponseResolver: noCnameResponseResolver,
+		NoCnameMatchResolver:    noCnameMatchResolver,
 	})
 
 	// Create DNS server

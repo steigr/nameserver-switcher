@@ -32,11 +32,11 @@ The nameserver-switcher router implements an intelligent decision tree to determ
               NO│                             │YES
                 ▼                             ▼
     ┌────────────────────┐      ┌────────────────────────┐
-    │ Use System         │      │ Query Explicit         │
+    │ Use Passthrough    │      │ Query Explicit         │
     │ Resolver           │      │ Resolver               │
-    │ (Recursive)        │      │ (Non-recursive)        │
-    └────────────────────┘      └─────────┬──────────────┘
-                                          ▼
+    │ (PASSTHROUGH_      │      │ (Non-recursive)        │
+    │  RESOLVER)         │      └─────────┬──────────────┘
+    └────────────────────┘                ▼
                               ┌────────────────────────┐
                               │ Response has CNAME?    │
                               └─────────┬──────────────┘
@@ -46,26 +46,28 @@ The nameserver-switcher router implements an intelligent decision tree to determ
                           NO│                       │YES
                             ▼                       ▼
                 ┌────────────────────┐   ┌────────────────────┐
-                │ Use System         │   │ Extract CNAME      │
-                │ Resolver           │   │ Target             │
-                │ (Fallback)         │   └─────────┬──────────┘
-                └────────────────────┘             ▼
-                                        ┌────────────────────┐
-                                        │ Match CNAME against│
-                                        │ CNAME_PATTERNS?    │
-                                        └─────────┬──────────┘
-                                                  ▼
-                                      ┌───────────┴───────────┐
-                                      │                       │
-                                    NO│                       │YES
-                                      ▼                       ▼
-                          ┌────────────────────┐   ┌────────────────────┐
-                          │ Use System         │   │ Return Response    │
-                          │ Resolver           │   │ from Explicit      │
-                          │ (Fallback)         │   │ Resolver           │
-                          └────────────────────┘   │ (Recursive)        │
-                                                   └────────────────────┘
+                │ Use No-CNAME-      │   │ Extract CNAME      │
+                │ Response Resolver  │   │ Target             │
+                │ (NO_CNAME_RESPONSE_│   └─────────┬──────────┘
+                │  RESOLVER)         │             ▼
+                └────────────────────┘   ┌────────────────────┐
+                                         │ Match CNAME against│
+                                         │ CNAME_PATTERNS?    │
+                                         └─────────┬──────────┘
+                                                   ▼
+                                       ┌───────────┴───────────┐
+                                       │                       │
+                                     NO│                       │YES
+                                       ▼                       ▼
+                           ┌────────────────────┐   ┌────────────────────┐
+                           │ Use No-CNAME-Match │   │ Return Response    │
+                           │ Resolver           │   │ from Explicit      │
+                           │ (NO_CNAME_MATCH_   │   │ Resolver           │
+                           │  RESOLVER)         │   │ (Recursive)        │
+                           └────────────────────┘   └────────────────────┘
 ----
+
+NOTE: Each fallback resolver is independently configurable. If not configured, they fall back to the system resolver (REQUEST_RESOLVER or /etc/resolv.conf).
 
 === Routing Modes
 
@@ -81,42 +83,46 @@ nameserver-switcher operates in different modes depending on the pattern matchin
 |CNAME Pattern Match
 |Resolver Used
 
-|**System Fallback**
+|**Passthrough**
 |❌ No Match
 |N/A
 |N/A
-|System Resolver (Recursive)
+|Passthrough Resolver (PASSTHROUGH_RESOLVER)
 
-|**System Fallback (No CNAME)**
+|**No CNAME Response**
 |✅ Match
 |❌ No CNAME
 |N/A
-|System Resolver (Fallback)
+|No-CNAME-Response Resolver (NO_CNAME_RESPONSE_RESOLVER)
 
 |**Explicit Recursive**
 |✅ Match
 |✅ CNAME Present
 |✅ CNAME Matches
-|Explicit Resolver (Recursive resolution)
+|Explicit Resolver (EXPLICIT_RESOLVER)
 
-|**System Override (CNAME No Match)**
+|**No CNAME Match**
 |✅ Match
 |✅ CNAME Present
 |❌ CNAME No Match
-|System Resolver (Fallback)
+|No-CNAME-Match Resolver (NO_CNAME_MATCH_RESOLVER)
 
 |===
 
+NOTE: If specific resolvers are not configured, they fall back to the system resolver (REQUEST_RESOLVER or /etc/resolv.conf).
+
 === Detailed Mode Descriptions
 
-==== Mode 1: System Fallback
+==== Mode 1: Passthrough
 
 **Trigger:** Request does not match any REQUEST_PATTERNS
 
+**Resolver:** PASSTHROUGH_RESOLVER (falls back to REQUEST_RESOLVER or system resolver)
+
 **Behavior:**
 
-* Immediately routes query to system resolver
-* Full recursive resolution performed by system resolver
+* Immediately routes query to passthrough resolver
+* Full recursive resolution performed by passthrough resolver
 * No pattern matching overhead
 * Standard DNS resolution
 
@@ -129,21 +135,23 @@ Request Pattern: ".*\.example\.com$"
 
 Result:
   ✗ No REQUEST_PATTERN match
-  → Use System Resolver
+  → Use Passthrough Resolver
   → Returns: unmatched-domain.com A 1.2.3.4
 ----
 
 **Use Case:** Default behavior for queries outside configured patterns (e.g., general internet domains)
 
-==== Mode 2: System Fallback (No CNAME)
+==== Mode 2: No CNAME Response
 
 **Trigger:** Request matches REQUEST_PATTERNS but response from explicit resolver contains no CNAME
+
+**Resolver:** NO_CNAME_RESPONSE_RESOLVER (falls back to REQUEST_RESOLVER or system resolver)
 
 **Behavior:**
 
 * Queries explicit resolver (first)
 * Response contains direct A/AAAA records (no CNAME)
-* **Falls back to system resolver** for the actual response
+* **Falls back to no-cname-response resolver** for the actual response
 * CNAME pattern checking not applicable (no CNAME present)
 
 **Example:**
@@ -158,11 +166,11 @@ Result:
   ✓ REQUEST_PATTERN matches
   → Query Explicit Resolver (first check)
   ✗ No CNAME in response
-  → Fallback to System Resolver
-  → Returns: response from system resolver
+  → Fallback to No-CNAME-Response Resolver
+  → Returns: response from no-cname-response resolver
 ----
 
-**Use Case:** Queries that match request patterns but don't have CNAMEs - system resolver handles resolution
+**Use Case:** Queries that match request patterns but don't have CNAMEs - dedicated resolver handles resolution
 
 ==== Mode 3: Explicit Recursive
 
@@ -200,17 +208,19 @@ Result:
 
 **Use Case:** CDN-backed services, load-balanced endpoints, or services with CNAME records pointing to specific infrastructure
 
-==== Mode 4: System Override
+==== Mode 4: No CNAME Match
 
 **Trigger:** Request matches REQUEST_PATTERNS, response has CNAME, but CNAME does NOT match CNAME_PATTERNS
+
+**Resolver:** NO_CNAME_MATCH_RESOLVER (falls back to REQUEST_RESOLVER or system resolver)
 
 **Behavior:**
 
 * Queries explicit resolver initially
 * Response contains CNAME record
 * CNAME target does NOT match CNAME pattern
-* Falls back to system resolver for recursive resolution
-* System resolver handles the full query
+* Falls back to no-cname-match resolver for recursive resolution
+* No-cname-match resolver handles the full query
 
 **Example:**
 
@@ -227,8 +237,8 @@ Result:
   → Query Explicit Resolver
   ✓ CNAME present: "service.external-provider.com"
   ✗ CNAME_PATTERN no match (not .*-prod\.cdn\.example\.com$)
-  → Fallback to System Resolver
-  → System resolver recursively resolves service.external-provider.com
+  → Fallback to No-CNAME-Match Resolver
+  → No-cname-match resolver recursively resolves service.external-provider.com
   → Returns:
       external.example.com CNAME service.external-provider.com
       service.external-provider.com A 203.0.113.50

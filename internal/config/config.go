@@ -16,11 +16,23 @@ type Config struct {
 	// CNAMEPatterns are regex patterns to match CNAME responses.
 	CNAMEPatterns []string
 
-	// RequestResolver is the DNS server for initial non-recursive lookups.
+	// RequestResolver is the DNS server for initial non-recursive lookups (system default).
 	RequestResolver string
 
 	// ExplicitResolver is the DNS server for recursive lookups when CNAME matches.
 	ExplicitResolver string
+
+	// PassthroughResolver is the DNS server for requests that don't match any request pattern.
+	// Falls back to RequestResolver if not set.
+	PassthroughResolver string
+
+	// NoCnameResponseResolver is the DNS server for responses without CNAME records.
+	// Falls back to RequestResolver if not set.
+	NoCnameResponseResolver string
+
+	// NoCnameMatchResolver is the DNS server for CNAME responses that don't match CNAME patterns.
+	// Falls back to RequestResolver if not set.
+	NoCnameMatchResolver string
 
 	// DNSListenAddr is the address to listen for DNS requests.
 	DNSListenAddr string
@@ -56,20 +68,23 @@ type Config struct {
 // DefaultConfig returns a Config with default values.
 func DefaultConfig() *Config {
 	return &Config{
-		RequestPatterns:  []string{},
-		CNAMEPatterns:    []string{},
-		RequestResolver:  "",
-		ExplicitResolver: "",
-		DNSListenAddr:    "0.0.0.0",
-		GRPCListenAddr:   "0.0.0.0",
-		HTTPListenAddr:   "0.0.0.0",
-		DNSPort:          5353,
-		GRPCPort:         5354,
-		HTTPPort:         8080,
-		Debug:            false,
-		LogRequests:      true,
-		LogResponses:     true,
-		LogFormat:        "text",
+		RequestPatterns:         []string{},
+		CNAMEPatterns:           []string{},
+		RequestResolver:         "",
+		ExplicitResolver:        "",
+		PassthroughResolver:     "",
+		NoCnameResponseResolver: "",
+		NoCnameMatchResolver:    "",
+		DNSListenAddr:           "0.0.0.0",
+		GRPCListenAddr:          "0.0.0.0",
+		HTTPListenAddr:          "0.0.0.0",
+		DNSPort:                 5353,
+		GRPCPort:                5354,
+		HTTPPort:                8080,
+		Debug:                   false,
+		LogRequests:             true,
+		LogResponses:            true,
+		LogFormat:               "text",
 	}
 }
 
@@ -79,11 +94,17 @@ func (c *Config) ParseFlags() {
 	var cnamePatternsStr string
 	var requestResolver string
 	var explicitResolver string
+	var passthroughResolver string
+	var noCnameResponseResolver string
+	var noCnameMatchResolver string
 
 	pflag.StringVar(&requestPatternsStr, "request-patterns", "", "Newline-delimited regex patterns for matching incoming requests")
 	pflag.StringVar(&cnamePatternsStr, "cname-patterns", "", "Newline-delimited regex patterns for matching CNAME responses")
 	pflag.StringVar(&requestResolver, "request-resolver", "", "DNS server for initial non-recursive lookups (e.g., 8.8.8.8:53)")
 	pflag.StringVar(&explicitResolver, "explicit-resolver", "", "DNS server for recursive lookups when CNAME matches (e.g., 1.1.1.1:53)")
+	pflag.StringVar(&passthroughResolver, "passthrough-resolver", "", "DNS server for requests not matching any pattern (falls back to request-resolver)")
+	pflag.StringVar(&noCnameResponseResolver, "no-cname-response-resolver", "", "DNS server for responses without CNAME (falls back to request-resolver)")
+	pflag.StringVar(&noCnameMatchResolver, "no-cname-match-resolver", "", "DNS server for CNAME responses not matching patterns (falls back to request-resolver)")
 	pflag.StringVar(&c.DNSListenAddr, "dns-listen-addr", c.DNSListenAddr, "Address to listen for DNS requests")
 	pflag.StringVar(&c.GRPCListenAddr, "grpc-listen-addr", c.GRPCListenAddr, "Address to listen for gRPC requests")
 	pflag.StringVar(&c.HTTPListenAddr, "http-listen-addr", c.HTTPListenAddr, "Address to listen for HTTP health/metrics requests")
@@ -110,6 +131,15 @@ func (c *Config) ParseFlags() {
 	if explicitResolver != "" {
 		c.ExplicitResolver = explicitResolver
 	}
+	if passthroughResolver != "" {
+		c.PassthroughResolver = passthroughResolver
+	}
+	if noCnameResponseResolver != "" {
+		c.NoCnameResponseResolver = noCnameResponseResolver
+	}
+	if noCnameMatchResolver != "" {
+		c.NoCnameMatchResolver = noCnameMatchResolver
+	}
 }
 
 // LoadFromEnv loads configuration from environment variables.
@@ -126,6 +156,15 @@ func (c *Config) LoadFromEnv() {
 	}
 	if resolver := os.Getenv("EXPLICIT_RESOLVER"); resolver != "" {
 		c.ExplicitResolver = resolver
+	}
+	if resolver := os.Getenv("PASSTHROUGH_RESOLVER"); resolver != "" {
+		c.PassthroughResolver = resolver
+	}
+	if resolver := os.Getenv("NO_CNAME_RESPONSE_RESOLVER"); resolver != "" {
+		c.NoCnameResponseResolver = resolver
+	}
+	if resolver := os.Getenv("NO_CNAME_MATCH_RESOLVER"); resolver != "" {
+		c.NoCnameMatchResolver = resolver
 	}
 	if addr := os.Getenv("DNS_LISTEN_ADDR"); addr != "" {
 		c.DNSListenAddr = addr

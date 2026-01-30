@@ -35,11 +35,19 @@ type Infrastructure struct {
 	NameserverSwitch testcontainers.Container
 	CoreDNS          testcontainers.Container
 
+	// Additional DNS servers for testing different resolver scenarios
+	DNSMasqPassthrough     testcontainers.Container
+	DNSMasqNoCnameResponse testcontainers.Container
+	DNSMasqNoCnameMatch    testcontainers.Container
+
 	// Resolved addresses
-	DNSMasqSystemAddr    string
-	DNSMasqExplicitAddr  string
-	NameserverSwitchAddr string
-	CoreDNSAddr          string
+	DNSMasqSystemAddr          string
+	DNSMasqExplicitAddr        string
+	DNSMasqPassthroughAddr     string
+	DNSMasqNoCnameResponseAddr string
+	DNSMasqNoCnameMatchAddr    string
+	NameserverSwitchAddr       string
+	CoreDNSAddr                string
 }
 
 // projectRoot returns the project root directory.
@@ -239,6 +247,274 @@ func Setup(ctx context.Context, mode TestMode) (*Infrastructure, error) {
 	return infra, nil
 }
 
+// SetupWithSeparateResolvers creates infrastructure with separate DNS servers for each resolver type.
+// This allows testing that each fallback scenario uses the correct resolver.
+func SetupWithSeparateResolvers(ctx context.Context, mode TestMode) (*Infrastructure, error) {
+	infra := &Infrastructure{Mode: mode}
+
+	// Create network
+	net, err := network.New(ctx, network.WithDriver("bridge"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create network: %w", err)
+	}
+	infra.Network = net
+
+	networkName := net.Name
+
+	// Start dnsmasq-passthrough (for unmatched requests)
+	// Returns unique IP 127.0.0.10 for unmatched.example.org
+	infra.DNSMasqPassthrough, err = testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:    "4km3/dnsmasq:latest",
+			Networks: []string{networkName},
+			NetworkAliases: map[string][]string{
+				networkName: {"dnsmasq-passthrough"},
+			},
+			Cmd: []string{
+				"--keep-in-foreground",
+				"--log-facility=-",
+				"--no-resolv",
+				"--no-poll",
+				// Return unique IP for passthrough
+				"--address=/unmatched.example.org/127.0.0.10",
+			},
+			ExposedPorts: []string{"53/udp", "53/tcp"},
+			WaitingFor:   wait.ForLog("started").WithStartupTimeout(60 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		infra.Teardown(ctx)
+		return nil, fmt.Errorf("failed to start dnsmasq-passthrough: %w", err)
+	}
+
+	dnsmasqPassthroughIP, err := infra.DNSMasqPassthrough.ContainerIP(ctx)
+	if err != nil {
+		infra.Teardown(ctx)
+		return nil, fmt.Errorf("failed to get dnsmasq-passthrough IP: %w", err)
+	}
+	infra.DNSMasqPassthroughAddr = dnsmasqPassthroughIP + ":53"
+
+	// Start dnsmasq-no-cname-response (for requests without CNAME in response)
+	// Returns unique IP 127.0.0.20 for direct.example.com
+	infra.DNSMasqNoCnameResponse, err = testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:    "4km3/dnsmasq:latest",
+			Networks: []string{networkName},
+			NetworkAliases: map[string][]string{
+				networkName: {"dnsmasq-no-cname-response"},
+			},
+			Cmd: []string{
+				"--keep-in-foreground",
+				"--log-facility=-",
+				"--no-resolv",
+				"--no-poll",
+				// Return unique IP for no-cname-response
+				"--address=/direct.example.com/127.0.0.20",
+			},
+			ExposedPorts: []string{"53/udp", "53/tcp"},
+			WaitingFor:   wait.ForLog("started").WithStartupTimeout(60 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		infra.Teardown(ctx)
+		return nil, fmt.Errorf("failed to start dnsmasq-no-cname-response: %w", err)
+	}
+
+	dnsmasqNoCnameResponseIP, err := infra.DNSMasqNoCnameResponse.ContainerIP(ctx)
+	if err != nil {
+		infra.Teardown(ctx)
+		return nil, fmt.Errorf("failed to get dnsmasq-no-cname-response IP: %w", err)
+	}
+	infra.DNSMasqNoCnameResponseAddr = dnsmasqNoCnameResponseIP + ":53"
+
+	// Start dnsmasq-no-cname-match (for CNAME responses that don't match pattern)
+	// Returns unique IP 127.0.0.30 for hello.example.com
+	infra.DNSMasqNoCnameMatch, err = testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:    "4km3/dnsmasq:latest",
+			Networks: []string{networkName},
+			NetworkAliases: map[string][]string{
+				networkName: {"dnsmasq-no-cname-match"},
+			},
+			Cmd: []string{
+				"--keep-in-foreground",
+				"--log-facility=-",
+				"--no-resolv",
+				"--no-poll",
+				// Return unique IP for no-cname-match
+				"--address=/hello.example.com/127.0.0.30",
+				"--address=/bar-nomatch.example.com/127.0.0.31",
+			},
+			ExposedPorts: []string{"53/udp", "53/tcp"},
+			WaitingFor:   wait.ForLog("started").WithStartupTimeout(60 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		infra.Teardown(ctx)
+		return nil, fmt.Errorf("failed to start dnsmasq-no-cname-match: %w", err)
+	}
+
+	dnsmasqNoCnameMatchIP, err := infra.DNSMasqNoCnameMatch.ContainerIP(ctx)
+	if err != nil {
+		infra.Teardown(ctx)
+		return nil, fmt.Errorf("failed to get dnsmasq-no-cname-match IP: %w", err)
+	}
+	infra.DNSMasqNoCnameMatchAddr = dnsmasqNoCnameMatchIP + ":53"
+
+	// Start dnsmasq-explicit (for matched CNAME patterns)
+	infra.DNSMasqExplicit, err = testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:    "4km3/dnsmasq:latest",
+			Networks: []string{networkName},
+			NetworkAliases: map[string][]string{
+				networkName: {"dnsmasq-explicit"},
+			},
+			Cmd: []string{
+				"--keep-in-foreground",
+				"--log-facility=-",
+				"--no-resolv",
+				"--no-poll",
+				// foo.example.com CNAME to bar-match.example.com (matches CNAME pattern)
+				"--cname=foo.example.com,bar-match.example.com",
+				// hello.example.com CNAME to bar-nomatch.example.com (doesn't match CNAME pattern)
+				"--cname=hello.example.com,bar-nomatch.example.com",
+				// direct.example.com has NO CNAME, direct A record
+				"--address=/direct.example.com/127.0.0.5",
+				// bar-match.example.com returns 127.0.0.2 on explicit resolver
+				"--address=/bar-match.example.com/127.0.0.2",
+			},
+			ExposedPorts: []string{"53/udp", "53/tcp"},
+			WaitingFor:   wait.ForLog("started").WithStartupTimeout(60 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		infra.Teardown(ctx)
+		return nil, fmt.Errorf("failed to start dnsmasq-explicit: %w", err)
+	}
+
+	dnsmasqExplicitIP, err := infra.DNSMasqExplicit.ContainerIP(ctx)
+	if err != nil {
+		infra.Teardown(ctx)
+		return nil, fmt.Errorf("failed to get dnsmasq-explicit IP: %w", err)
+	}
+	infra.DNSMasqExplicitAddr = dnsmasqExplicitIP + ":53"
+
+	// Build and start nameserver-switcher with separate resolvers
+	infra.NameserverSwitch, err = testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			FromDockerfile: testcontainers.FromDockerfile{
+				Context:    projectRoot(),
+				Dockerfile: "Dockerfile",
+			},
+			Networks: []string{networkName},
+			NetworkAliases: map[string][]string{
+				networkName: {"nameserver-switcher"},
+			},
+			Env: map[string]string{
+				"REQUEST_PATTERNS": `.*\.example\.com$`,
+				"CNAME_PATTERNS":   `.*-match\.example\.com$`,
+				// Use separate resolvers for each scenario
+				"EXPLICIT_RESOLVER":          "dnsmasq-explicit:53",
+				"PASSTHROUGH_RESOLVER":       "dnsmasq-passthrough:53",
+				"NO_CNAME_RESPONSE_RESOLVER": "dnsmasq-no-cname-response:53",
+				"NO_CNAME_MATCH_RESOLVER":    "dnsmasq-no-cname-match:53",
+				"DNS_PORT":                   "5353",
+				"GRPC_PORT":                  "5354",
+				"HTTP_PORT":                  "8080",
+			},
+			ExposedPorts: []string{"5353/udp", "5353/tcp", "5354/tcp", "8080/tcp"},
+			WaitingFor:   wait.ForHTTP("/healthz").WithPort("8080/tcp").WithStartupTimeout(120 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		infra.Teardown(ctx)
+		return nil, fmt.Errorf("failed to start nameserver-switcher: %w", err)
+	}
+
+	nsSwitchIP, err := infra.NameserverSwitch.ContainerIP(ctx)
+	if err != nil {
+		infra.Teardown(ctx)
+		return nil, fmt.Errorf("failed to get nameserver-switcher IP: %w", err)
+	}
+	infra.NameserverSwitchAddr = nsSwitchIP
+
+	// Create CoreDNS Corefile based on mode
+	var corefile string
+	switch mode {
+	case DNSMode:
+		corefile = fmt.Sprintf(`.:53 {
+    log
+    errors
+    forward . %s:5353 {
+        max_fails 0
+    }
+}
+`, nsSwitchIP)
+	case GRPCMode:
+		corefile = fmt.Sprintf(`.:53 {
+    log
+    errors
+    grpc . %s:5354
+}
+`, nsSwitchIP)
+	}
+
+	// Start CoreDNS
+	infra.CoreDNS, err = testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:    "coredns/coredns:latest",
+			Networks: []string{networkName},
+			NetworkAliases: map[string][]string{
+				networkName: {"coredns"},
+			},
+			Cmd: []string{"-conf", "/etc/coredns/Corefile"},
+			Files: []testcontainers.ContainerFile{
+				{
+					Reader:            stringReader(corefile),
+					ContainerFilePath: "/etc/coredns/Corefile",
+					FileMode:          0644,
+				},
+			},
+			ExposedPorts: []string{"53/udp", "53/tcp"},
+			WaitingFor:   wait.ForLog("CoreDNS").WithStartupTimeout(60 * time.Second),
+		},
+		Started: true,
+	})
+	if err != nil {
+		infra.Teardown(ctx)
+		return nil, fmt.Errorf("failed to start CoreDNS: %w", err)
+	}
+
+	corednsIPSep, err := infra.CoreDNS.ContainerIP(ctx)
+	if err != nil {
+		infra.Teardown(ctx)
+		return nil, fmt.Errorf("failed to get CoreDNS IP: %w", err)
+	}
+	infra.CoreDNSAddr = corednsIPSep
+
+	return infra, nil
+}
+
+// GetDNSMasqPassthroughInternalAddr returns the internal network address for dnsmasq-passthrough.
+func (i *Infrastructure) GetDNSMasqPassthroughInternalAddr() string {
+	return i.DNSMasqPassthroughAddr
+}
+
+// GetDNSMasqNoCnameResponseInternalAddr returns the internal network address for dnsmasq-no-cname-response.
+func (i *Infrastructure) GetDNSMasqNoCnameResponseInternalAddr() string {
+	return i.DNSMasqNoCnameResponseAddr
+}
+
+// GetDNSMasqNoCnameMatchInternalAddr returns the internal network address for dnsmasq-no-cname-match.
+func (i *Infrastructure) GetDNSMasqNoCnameMatchInternalAddr() string {
+	return i.DNSMasqNoCnameMatchAddr
+}
+
 // Teardown stops and removes all test containers.
 func (i *Infrastructure) Teardown(ctx context.Context) {
 	if i.CoreDNS != nil {
@@ -252,6 +528,15 @@ func (i *Infrastructure) Teardown(ctx context.Context) {
 	}
 	if i.DNSMasqSystem != nil {
 		_ = i.DNSMasqSystem.Terminate(ctx)
+	}
+	if i.DNSMasqPassthrough != nil {
+		_ = i.DNSMasqPassthrough.Terminate(ctx)
+	}
+	if i.DNSMasqNoCnameResponse != nil {
+		_ = i.DNSMasqNoCnameResponse.Terminate(ctx)
+	}
+	if i.DNSMasqNoCnameMatch != nil {
+		_ = i.DNSMasqNoCnameMatch.Terminate(ctx)
 	}
 	if i.Network != nil {
 		_ = i.Network.Remove(ctx)

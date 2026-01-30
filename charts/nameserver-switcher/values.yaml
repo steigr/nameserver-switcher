@@ -86,6 +86,21 @@ resolvers:
   # Example: "1.1.1.1:53"
   explicit: ""
 
+  # Passthrough resolver - DNS server for requests not matching any request pattern
+  # Falls back to request resolver if not set
+  # Example: "9.9.9.9:53"
+  passthrough: ""
+
+  # No-CNAME-response resolver - DNS server for responses without CNAME records
+  # Falls back to request resolver if not set
+  # Example: "208.67.222.222:53"
+  noCnameResponse: ""
+
+  # No-CNAME-match resolver - DNS server for CNAME responses not matching patterns
+  # Falls back to request resolver if not set
+  # Example: "208.67.220.220:53"
+  noCnameMatch: ""
+
 serviceAccount:
   # Specifies whether a service account should be created
   create: true
