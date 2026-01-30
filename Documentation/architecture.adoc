@@ -13,40 +13,38 @@ nameserver-switcher is designed as a modular DNS proxy that integrates seamlessl
 
 ==== Core Components
 
-[plantuml, component-diagram, svg]
+[mermaid]
 ....
-@startuml
-package "nameserver-switcher" {
-  [DNS Server] as DNS
-  [gRPC Server] as GRPC
-  [HTTP Server] as HTTP
-  [Router] as Router
-  [Matcher] as Matcher
-  [Resolver] as Resolver
-  [Metrics] as Metrics
+flowchart TB
+    subgraph External
+        CoreDNS[CoreDNS]
+        SysDNS[System DNS]
+        ExpDNS[Explicit DNS]
+        Prom[Prometheus]
+    end
 
-  DNS --> Router
-  GRPC --> Router
-  Router --> Matcher
-  Router --> Resolver
-  DNS --> Metrics
-  GRPC --> Metrics
-  HTTP --> Metrics
-}
+    subgraph nameserver-switcher
+        DNS[DNS Server]
+        GRPC[gRPC Server]
+        HTTP[HTTP Server]
+        Router[Router]
+        Matcher[Matcher]
+        Resolver[Resolver]
+        Metrics[Metrics]
+    end
 
-package "External" {
-  [CoreDNS] as CoreDNS
-  [System DNS] as SysDNS
-  [Explicit DNS] as ExpDNS
-  [Prometheus] as Prom
-}
-
-CoreDNS --> DNS : forward plugin
-CoreDNS --> GRPC : grpc plugin
-Router --> SysDNS : fallback queries
-Router --> ExpDNS : matched queries
-HTTP --> Prom : /metrics
-@enduml
+    CoreDNS -->|forward plugin| DNS
+    CoreDNS -->|grpc plugin| GRPC
+    DNS --> Router
+    GRPC --> Router
+    Router --> Matcher
+    Router --> Resolver
+    DNS --> Metrics
+    GRPC --> Metrics
+    HTTP --> Metrics
+    Router -->|fallback queries| SysDNS
+    Router -->|matched queries| ExpDNS
+    HTTP -->|/metrics| Prom
 ....
 
 ===== 1. DNS Server
