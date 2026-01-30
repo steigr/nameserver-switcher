@@ -422,6 +422,8 @@ kubectl get svc nameserver-switcher -o jsonpath='{.spec.ports[0].nodePort}'
 dig @<node-ip>:<nodeport> example.com
 ----
 
+[source,yaml]
+----
 # DNS server configuration
 dns:
   port: 53
