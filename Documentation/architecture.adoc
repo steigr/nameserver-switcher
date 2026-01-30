@@ -62,7 +62,9 @@ HTTP --> Prom : /metrics
 * **Port**: 5354 (default, configurable)
 * **Protocol**: gRPC with protobuf
 * **Implementation**: `internal/grpc/server.go`
-* **API**: Defined in `pkg/api/v1/switcher.proto`
+* **APIs**:
+  - Management API: `pkg/api/v1/switcher.proto` - Configuration and stats
+  - CoreDNS-compatible API: `pkg/api/coredns/dns.proto` - DNS wire format queries
 
 ===== 3. HTTP Server
 
@@ -111,20 +113,20 @@ HTTP --> Prom : /metrics
 [source]
 ----
 ┌─────────────────────────────────────────────────────────┐
-│                    Client Layer                          │
+│                    Client Layer                         │
 │  (DNS Clients, CoreDNS, Applications)                   │
 └─────────────────────────────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│                  Protocol Layer                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │  DNS Server  │  │ gRPC Server  │  │  HTTP Server │  │
-│  │  (UDP/TCP)   │  │   (HTTP/2)   │  │   (Metrics)  │  │
-│  └──────────────┘  └──────────────┘  └──────────────┘  │
+│                  Protocol Layer                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐   │
+│  │  DNS Server  │  │ gRPC Server  │  │  HTTP Server │   │
+│  │  (UDP/TCP)   │  │   (HTTP/2)   │  │   (Metrics)  │   │
+│  └──────────────┘  └──────────────┘  └──────────────┘   │
 └─────────────────────────────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│                   Routing Layer                          │
+│                   Routing Layer                         │
 │  ┌──────────────────────────────────────────────────┐   │
 │  │              Router                              │   │
 │  │  • Pattern Matching                              │   │
@@ -134,15 +136,15 @@ HTTP --> Prom : /metrics
 └─────────────────────────────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│                 Resolution Layer                         │
-│  ┌─────────────────┐         ┌─────────────────┐       │
-│  │ System Resolver │         │Explicit Resolver│       │
-│  │  (Fallback)     │         │   (Matched)     │       │
-│  └─────────────────┘         └─────────────────┘       │
+│                 Resolution Layer                        │
+│  ┌─────────────────┐         ┌─────────────────┐        │
+│  │ System Resolver │         │Explicit Resolver│        │
+│  │  (Fallback)     │         │   (Matched)     │        │
+│  └─────────────────┘         └─────────────────┘        │
 └─────────────────────────────────────────────────────────┘
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│               Upstream DNS Servers                       │
+│               Upstream DNS Servers                      │
 │  (System DNS, 8.8.8.8, 1.1.1.1, Custom Servers)         │
 └─────────────────────────────────────────────────────────┘
 ----
@@ -248,7 +250,13 @@ kind: Deployment
 metadata:
   name: coredns-with-switcher
 spec:
+  selector:
+    matchLabels:
+      app: coredns-with-switcher
   template:
+    metadata:
+      labels:
+        app: coredns-with-switcher
     spec:
       containers:
       - name: coredns
@@ -296,7 +304,13 @@ kind: Deployment
 metadata:
   name: nameserver-switcher
 spec:
+  selector:
+    matchLabels:
+      app: nameserver-switcher
   template:
+    metadata:
+      labels:
+        app: nameserver-switcher
     spec:
       containers:
       - name: nameserver-switcher
