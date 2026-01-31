@@ -6,6 +6,12 @@
 
 A DNS proxy server with intelligent routing based on regex pattern matching. It provides both DNS and gRPC interfaces, along with Prometheus metrics and health endpoints.
 
+== Code Metrics
+
+image::https://qlty.sh/gh/steigr/projects/nameserver-switcher/coverage.svg[Code Coverage, link="https://qlty.sh/gh/steigr/projects/nameserver-switcher"]
+
+image::https://qlty.sh/gh/steigr/projects/nameserver-switcher/maintainability.svg[Maintainability, link="https://qlty.sh/gh/steigr/projects/nameserver-switcher"]
+
 == Features
 
 * **Pattern-based DNS routing**: Match incoming DNS requests against configurable regex patterns
