@@ -24,12 +24,12 @@ build-all:
 
 # Run tests
 # Note: LC_DYSYMTAB warnings on macOS are harmless linker warnings and can be ignored
-test:
+test-silent:
 	@echo "Running tests (linker warnings on macOS are expected and harmless)..."
 	@go test -v -race -coverprofile=coverage.out ./... 2>&1 | grep -v "LC_DYSYMTAB" || true
 
 # Run tests without filtering warnings (shows all output)
-test-verbose:
+test:
 	go test -v -race -coverprofile=coverage.out ./...
 
 # Run tests with coverage report
@@ -234,7 +234,7 @@ help:
 
 # Run all integration tests using testcontainers-go
 integration-test:
-	go test -tags=integration -v -timeout 10m ./test/integration/...
+	go test -tags=integration -coverprofile=integration-coverage.out -v -timeout 10m ./test/integration/...
 
 # Run DNS mode integration tests using testcontainers-go
 integration-test-dns:
