@@ -375,7 +375,7 @@ func TestRouter_Route_ExplicitResolverError_AfterCNAMEMatch(t *testing.T) {
 	// We need a resolver that returns a response first time but errors on subsequent use
 	// For simplicity, we'll use a resolver that returns CNAME with matching pattern
 	// and then check if the error happens during the recursive lookup
-	
+
 	// Create a response with CNAME that matches the pattern
 	explicitRespWithCNAME := &dns.Msg{
 		Answer: []dns.RR{
@@ -865,7 +865,7 @@ func TestDNSResolver_Server(t *testing.T) {
 func TestSystemResolver_Resolve_FirstServerFails_SecondSucceeds(t *testing.T) {
 	// This tests the continue path when the first server fails but second succeeds
 	// We need to use real servers for this, but with a short timeout on the first one
-	
+
 	// Create a custom resolver with the first server being unreachable
 	r := &SystemResolver{
 		servers: []string{"127.0.0.1:1", "8.8.8.8:53"}, // First is localhost with closed port, second is real

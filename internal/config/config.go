@@ -146,6 +146,8 @@ func (c *Config) ParseFlags() {
 // LoadFromEnv loads configuration from environment variables.
 // Environment variables take precedence over default values but not CLI flags.
 func (c *Config) LoadFromEnv() {
+	isTrue := "true"
+
 	if patterns := os.Getenv("REQUEST_PATTERNS"); patterns != "" {
 		c.RequestPatterns = splitPatterns(patterns)
 	}
@@ -192,13 +194,13 @@ func (c *Config) LoadFromEnv() {
 		}
 	}
 	if debug := os.Getenv("DEBUG"); debug != "" {
-		c.Debug = debug == "true" || debug == "1"
+		c.Debug = debug == isTrue || debug == "1"
 	}
 	if logReq := os.Getenv("LOG_REQUESTS"); logReq != "" {
-		c.LogRequests = logReq == "true" || logReq == "1"
+		c.LogRequests = logReq == isTrue || logReq == "1"
 	}
 	if logResp := os.Getenv("LOG_RESPONSES"); logResp != "" {
-		c.LogResponses = logResp == "true" || logResp == "1"
+		c.LogResponses = logResp == isTrue || logResp == "1"
 	}
 	if logFormat := os.Getenv("LOG_FORMAT"); logFormat != "" {
 		c.LogFormat = logFormat
