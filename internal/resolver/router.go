@@ -80,94 +80,139 @@ func (r *Router) Route(ctx context.Context, req *dns.Msg) (*RouteResult, error) 
 		return nil, fmt.Errorf("no question in request")
 	}
 
-	qname := req.Question[0].Name
-	qname = strings.TrimSuffix(qname, ".")
-
+	qname := strings.TrimSuffix(req.Question[0].Name, ".")
 	result := &RouteResult{}
 
-	// Step 1: Check if request matches any request pattern
-	if r.requestMatcher != nil && r.requestMatcher.Match(qname) {
-		result.RequestMatched = true
-		result.MatchedPattern = r.requestMatcher.MatchingPattern(qname)
+	// Check if request matches any request pattern
+	if r.shouldUseRequestMatcher(qname) {
+		return r.routeMatchedRequest(ctx, req, qname, result)
+	}
 
-		// Do non-recursive lookup to explicit resolver
-		if r.explicitResolver != nil {
-			resp, err := r.explicitResolver.Resolve(ctx, req)
-			if err != nil {
-				return nil, fmt.Errorf("explicit resolver failed: %w", err)
-			}
+	// No pattern match, use passthroughResolver
+	return r.routePassthrough(ctx, req, result)
+}
 
-			// Step 2: Check if response contains CNAME that matches CNAME patterns
-			if HasCNAME(resp) && r.cnameMatcher != nil {
-				cnames := ExtractCNAME(resp)
-				for _, cname := range cnames {
-					cname = strings.TrimSuffix(cname, ".")
-					if r.cnameMatcher.Match(cname) {
-						result.CNAMEMatched = true
-						result.CNAMEPattern = r.cnameMatcher.MatchingPattern(cname)
+// shouldUseRequestMatcher checks if the request matches any pattern
+func (r *Router) shouldUseRequestMatcher(qname string) bool {
+	return r.requestMatcher != nil && r.requestMatcher.Match(qname)
+}
 
-						// Step 3: Do recursive lookup to explicit resolver
-						// Use the same explicit resolver for recursive lookup
-						explicitResp, err := r.explicitResolver.Resolve(ctx, req)
-						if err != nil {
-							return nil, fmt.Errorf("explicit resolver failed: %w", err)
-						}
-						result.Response = explicitResp
-						result.ResolverUsed = r.explicitResolver.Name()
-						return result, nil
-					}
-				}
+// routeMatchedRequest handles requests that match the request pattern
+func (r *Router) routeMatchedRequest(ctx context.Context, req *dns.Msg, qname string, result *RouteResult) (*RouteResult, error) {
+	result.RequestMatched = true
+	result.MatchedPattern = r.requestMatcher.MatchingPattern(qname)
 
-				// CNAME exists but doesn't match pattern: use noCnameMatchResolver
-				if r.noCnameMatchResolver != nil {
-					sysResp, err := r.noCnameMatchResolver.Resolve(ctx, req)
-					if err != nil {
-						return nil, fmt.Errorf("no-cname-match resolver failed: %w", err)
-					}
-					result.Response = sysResp
-					result.ResolverUsed = r.noCnameMatchResolver.Name()
-					return result, nil
-				}
-			} else {
-				// No CNAME in response: use noCnameResponseResolver
-				if r.noCnameResponseResolver != nil {
-					sysResp, err := r.noCnameResponseResolver.Resolve(ctx, req)
-					if err != nil {
-						return nil, fmt.Errorf("no-cname-response resolver failed: %w", err)
-					}
-					result.Response = sysResp
-					result.ResolverUsed = r.noCnameResponseResolver.Name()
-					return result, nil
-				}
-			}
+	// If no explicit resolver, use fallback
+	if r.explicitResolver == nil {
+		return r.useFallbackResolver(ctx, req, result)
+	}
+
+	// Query explicit resolver
+	resp, err := r.explicitResolver.Resolve(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("explicit resolver failed: %w", err)
+	}
+
+	// Process response based on CNAME presence
+	return r.processExplicitResponse(ctx, req, resp, result)
+}
+
+// processExplicitResponse handles the response from explicit resolver
+func (r *Router) processExplicitResponse(ctx context.Context, req *dns.Msg, resp *dns.Msg, result *RouteResult) (*RouteResult, error) {
+	if !HasCNAME(resp) {
+		return r.useNoCnameResponseResolver(ctx, req, result)
+	}
+
+	if r.cnameMatcher == nil {
+		return r.useNoCnameResponseResolver(ctx, req, result)
+	}
+
+	// Check if any CNAME matches the pattern
+	return r.processCNAMEMatch(ctx, req, resp, result)
+}
+
+// processCNAMEMatch checks CNAME records and routes accordingly
+func (r *Router) processCNAMEMatch(ctx context.Context, req *dns.Msg, resp *dns.Msg, result *RouteResult) (*RouteResult, error) {
+	cnames := ExtractCNAME(resp)
+
+	for _, cname := range cnames {
+		cname = strings.TrimSuffix(cname, ".")
+		if r.cnameMatcher.Match(cname) {
+			return r.handleMatchedCNAME(ctx, req, cname, result)
 		}
+	}
 
-		// If no explicit resolver configured but pattern matched, fall back to noCnameResponseResolver
-		if r.noCnameResponseResolver != nil {
-			sysResp, err := r.noCnameResponseResolver.Resolve(ctx, req)
-			if err != nil {
-				return nil, fmt.Errorf("no-cname-response resolver failed: %w", err)
-			}
-			result.Response = sysResp
-			result.ResolverUsed = r.noCnameResponseResolver.Name()
-			return result, nil
-		}
+	// CNAME exists but doesn't match pattern
+	return r.useNoCnameMatchResolver(ctx, req, result)
+}
 
+// handleMatchedCNAME handles a CNAME that matches the pattern
+func (r *Router) handleMatchedCNAME(ctx context.Context, req *dns.Msg, cname string, result *RouteResult) (*RouteResult, error) {
+	result.CNAMEMatched = true
+	result.CNAMEPattern = r.cnameMatcher.MatchingPattern(cname)
+
+	// Do recursive lookup to explicit resolver
+	explicitResp, err := r.explicitResolver.Resolve(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("explicit resolver failed: %w", err)
+	}
+
+	result.Response = explicitResp
+	result.ResolverUsed = r.explicitResolver.Name()
+	return result, nil
+}
+
+// useNoCnameMatchResolver uses the resolver for unmatched CNAMEs
+func (r *Router) useNoCnameMatchResolver(ctx context.Context, req *dns.Msg, result *RouteResult) (*RouteResult, error) {
+	if r.noCnameMatchResolver == nil {
 		return nil, fmt.Errorf("no resolver available for matched pattern")
 	}
 
-	// Step 5: No pattern match, use passthroughResolver
-	if r.passthroughResolver != nil {
-		resp, err := r.passthroughResolver.Resolve(ctx, req)
-		if err != nil {
-			return nil, fmt.Errorf("passthrough resolver failed: %w", err)
-		}
-		result.Response = resp
-		result.ResolverUsed = r.passthroughResolver.Name()
-		return result, nil
+	resp, err := r.noCnameMatchResolver.Resolve(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("no-cname-match resolver failed: %w", err)
 	}
 
-	return nil, fmt.Errorf("no resolver available")
+	result.Response = resp
+	result.ResolverUsed = r.noCnameMatchResolver.Name()
+	return result, nil
+}
+
+// useNoCnameResponseResolver uses the resolver for responses without CNAME
+func (r *Router) useNoCnameResponseResolver(ctx context.Context, req *dns.Msg, result *RouteResult) (*RouteResult, error) {
+	if r.noCnameResponseResolver == nil {
+		return nil, fmt.Errorf("no resolver available for matched pattern")
+	}
+
+	resp, err := r.noCnameResponseResolver.Resolve(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("no-cname-response resolver failed: %w", err)
+	}
+
+	result.Response = resp
+	result.ResolverUsed = r.noCnameResponseResolver.Name()
+	return result, nil
+}
+
+// useFallbackResolver uses noCnameResponseResolver when no explicit resolver is configured
+func (r *Router) useFallbackResolver(ctx context.Context, req *dns.Msg, result *RouteResult) (*RouteResult, error) {
+	return r.useNoCnameResponseResolver(ctx, req, result)
+}
+
+// routePassthrough handles requests that don't match any pattern
+func (r *Router) routePassthrough(ctx context.Context, req *dns.Msg, result *RouteResult) (*RouteResult, error) {
+	if r.passthroughResolver == nil {
+		return nil, fmt.Errorf("no resolver available")
+	}
+
+	resp, err := r.passthroughResolver.Resolve(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("passthrough resolver failed: %w", err)
+	}
+
+	result.Response = resp
+	result.ResolverUsed = r.passthroughResolver.Name()
+	return result, nil
 }
 
 // GetRequestMatcher returns the request matcher.
